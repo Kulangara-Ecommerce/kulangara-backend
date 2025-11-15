@@ -9,12 +9,12 @@ generator client {
 }
 
 datasource db {
-  provider = "mongodb"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  id              String    @id @default(uuid())
   email           String    @unique
   password        String
   firstName       String
@@ -38,16 +38,19 @@ model User {
   refreshTokens RefreshToken[]
   adminProfile  AdminProfile?
 
+  @@index([role])
+  @@index([isActive])
+  @@index([createdAt])
   @@map("users")
 }
 
 model AdminProfile {
-  id     String @id @default(auto()) @map("_id") @db.ObjectId
-  userId String @unique @db.ObjectId
+  id     String @id @default(uuid())
+  userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   permissions String[]
-  approvedBy  String?   @db.ObjectId
+  approvedBy  String?
   approvedAt  DateTime?
   department  String?
 
@@ -65,19 +68,21 @@ enum Role {
 }
 
 model RefreshToken {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  id        String   @id @default(uuid())
   token     String   @unique
-  userId    String   @db.ObjectId
+  userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
 
+  @@index([userId])
+  @@index([expiresAt])
   @@map("refresh_tokens")
 }
 
 model Address {
-  id     String @id @default(auto()) @map("_id") @db.ObjectId
-  userId String @db.ObjectId
+  id     String @id @default(uuid())
+  userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   firstName String
@@ -96,11 +101,13 @@ model Address {
   // Relations
   orders Order[]
 
+  @@index([userId])
+  @@index([userId, isDefault])
   @@map("addresses")
 }
 
 model Coupon {
-  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  id          String  @id @default(uuid())
   code        String  @unique
   name        String
   description String?
@@ -127,6 +134,8 @@ model Coupon {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([isActive])
+  @@index([validFrom, validUntil])
   @@map("coupons")
 }
 
@@ -137,9 +146,9 @@ enum DiscountType {
 }
 
 model Order {
-  id          String @id @default(auto()) @map("_id") @db.ObjectId
+  id          String @id @default(uuid())
   orderNumber String @unique
-  userId      String @db.ObjectId
+  userId      String
   user        User   @relation(fields: [userId], references: [id])
 
   // Status
@@ -154,7 +163,7 @@ model Order {
   totalAmount    Float
 
   // Address
-  shippingAddressId String  @db.ObjectId
+  shippingAddressId String
   shippingAddress   Address @relation(fields: [shippingAddressId], references: [id])
 
   // Payment
@@ -170,11 +179,17 @@ model Order {
   items         OrderItem[]
   statusHistory OrderStatusHistory[]
   coupon        Coupon?              @relation(fields: [couponId], references: [id])
-  couponId      String?              @db.ObjectId
+  couponId      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([userId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([userId, status])
+  @@index([createdAt])
+  @@index([paymentId])
   @@map("orders")
 }
 
@@ -199,8 +214,8 @@ enum PaymentStatus {
 }
 
 model OrderStatusHistory {
-  id      String @id @default(auto()) @map("_id") @db.ObjectId
-  orderId String @db.ObjectId
+  id      String @id @default(uuid())
+  orderId String
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   status    OrderStatus
@@ -209,14 +224,16 @@ model OrderStatusHistory {
 
   createdAt DateTime @default(now())
 
+  @@index([orderId])
+  @@index([orderId, createdAt])
   @@map("order_status_history")
 }
 
 model Review {
-  id        String  @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String  @db.ObjectId
+  id        String  @id @default(uuid())
+  userId    String
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  productId String  @db.ObjectId
+  productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   rating     Int // 1-5
@@ -229,25 +246,30 @@ model Review {
   updatedAt DateTime @updatedAt
 
   @@unique([userId, productId]) // One review per user per product
+  @@index([productId])
+  @@index([productId, isApproved])
+  @@index([userId])
   @@map("reviews")
 }
 
 model Wishlist {
-  id        String  @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String  @db.ObjectId
+  id        String  @id @default(uuid())
+  userId    String
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  productId String  @db.ObjectId
+  productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
   @@unique([userId, productId])
+  @@index([userId])
+  @@index([productId])
   @@map("wishlists")
 }
 
 model Cart {
-  id     String @id @default(auto()) @map("_id") @db.ObjectId
-  userId String @unique @db.ObjectId
+  id     String @id @default(uuid())
+  userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   items CartItem[]
@@ -262,12 +284,12 @@ model Cart {
 }
 
 model CartItem {
-  id        String          @id @default(auto()) @map("_id") @db.ObjectId
-  cartId    String          @db.ObjectId
+  id        String          @id @default(uuid())
+  cartId    String
   cart      Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
-  productId String          @db.ObjectId
+  productId String
   product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
-  variantId String?         @db.ObjectId
+  variantId String?
   variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   quantity Int
@@ -277,16 +299,18 @@ model CartItem {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([cartId])
+  @@index([productId])
   @@map("cart_items")
 }
 
 model Category {
-  id          String     @id @default(auto()) @map("_id") @db.ObjectId
+  id          String     @id @default(uuid())
   name        String     @unique
   slug        String     @unique
   description String?
   image       String?
-  parentId    String?    @db.ObjectId
+  parentId    String?
   parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   children    Category[] @relation("CategoryHierarchy")
   isActive    Boolean    @default(true)
@@ -298,11 +322,13 @@ model Category {
   // Relations
   products Product[]
 
+  @@index([isActive])
+  @@index([parentId])
   @@map("categories")
 }
 
 model Product {
-  id               String  @id @default(auto()) @map("_id") @db.ObjectId
+  id               String  @id @default(uuid())
   name             String
   slug             String  @unique
   description      String
@@ -333,7 +359,7 @@ model Product {
   gender     Gender?
 
   // Relations
-  categoryId    String           @db.ObjectId
+  categoryId    String
   category      Category         @relation(fields: [categoryId], references: [id])
   images        ProductImage[]
   variants      ProductVariant[]
@@ -345,6 +371,11 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([isFeatured])
+  @@index([categoryId, isActive])
+  @@index([createdAt])
   @@map("products")
 }
 
@@ -355,8 +386,8 @@ enum Gender {
 }
 
 model ProductImage {
-  id        String  @id @default(auto()) @map("_id") @db.ObjectId
-  productId String  @db.ObjectId
+  id        String  @id @default(uuid())
+  productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   url       String
@@ -366,12 +397,14 @@ model ProductImage {
 
   createdAt DateTime @default(now())
 
+  @@index([productId])
+  @@index([productId, isPrimary])
   @@map("product_images")
 }
 
 model ProductVariant {
-  id        String  @id @default(auto()) @map("_id") @db.ObjectId
-  productId String  @db.ObjectId
+  id        String  @id @default(uuid())
+  productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   size     String // S, M, L, XL, etc.
@@ -388,16 +421,18 @@ model ProductVariant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([productId])
+  @@index([isActive])
   @@map("product_variants")
 }
 
 model OrderItem {
-  id        String          @id @default(auto()) @map("_id") @db.ObjectId
-  orderId   String          @db.ObjectId
+  id        String          @id @default(uuid())
+  orderId   String
   order     Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId String          @db.ObjectId
+  productId String
   product   Product         @relation(fields: [productId], references: [id])
-  variantId String?         @db.ObjectId
+  variantId String?
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
 
   quantity Int
@@ -405,20 +440,26 @@ model OrderItem {
 
   createdAt DateTime @default(now())
 
+  @@index([orderId])
+  @@index([productId])
   @@map("order_items")
 }
 
 model Analytics {
-  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  id         String   @id @default(uuid())
   type       String   // page_view, product_view, purchase, etc.
   event      String
   data       Json     // Additional event data
-  userId     String?  @db.ObjectId
+  userId     String?
   sessionId  String?
   ip         String?
   userAgent  String?
   
   createdAt  DateTime @default(now())
   
+  @@index([type])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([type, createdAt])
   @@map("analytics")
 }
