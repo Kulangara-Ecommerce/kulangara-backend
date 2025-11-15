@@ -1,20 +1,20 @@
-import { Request, Response } from "express";
-import crypto from "crypto";
-import { prisma } from "../config/db";
-import { PaymentStatus, OrderStatus } from "@prisma/client";
-import { razorpay } from "../config/razorpay";
-import redis from "../config/redis";
-import { reserveStock, StockItem } from "../services/stock.service";
+import { Request, Response } from 'express';
+import crypto from 'crypto';
+import { prisma } from '../config/db';
+import { PaymentStatus, OrderStatus } from '@prisma/client';
+import { razorpay } from '../config/razorpay';
+import redis from '../config/redis';
+import { reserveStock, StockItem } from '../services/stock.service';
+import { env } from '../config/env';
+import { logger } from '../utils/logger';
+import { getHeaderString } from '../utils/typeGuards';
 import {
   ICreateRazorpayOrderRequest,
   IVerifyPaymentWithCartRequest,
   ITemporaryOrderData,
-} from "../types/payment.types";
+} from '../types/payment.types';
 
-export const createRazorpayOrder = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const createRazorpayOrder = async (req: Request, res: Response): Promise<void> => {
   try {
     const { orderId } = req.body;
 
@@ -38,15 +38,15 @@ export const createRazorpayOrder = async (
 
     if (!order) {
       res.status(404).json({
-        status: "error",
-        message: "Order not found",
+        status: 'error',
+        message: 'Order not found',
       });
       return;
     }
 
     const razorpayOrder = await razorpay.orders.create({
       amount: Math.round(order.totalAmount * 100), // Convert to smallest currency unit (paise)
-      currency: "INR",
+      currency: 'INR',
       receipt: order.orderNumber,
       notes: {
         orderId: order.id,
@@ -54,13 +54,13 @@ export const createRazorpayOrder = async (
     });
 
     res.json({
-      status: "success",
+      status: 'success',
       data: {
         orderId: razorpayOrder.id,
         currency: razorpayOrder.currency,
         amount: razorpayOrder.amount,
-        key: process.env.RAZORPAY_KEY_ID,
-        name: process.env.BUSINESS_NAME || "Kulangara",
+        key: env.RAZORPAY_KEY_ID,
+        name: env.BUSINESS_NAME || 'Kulangara',
         description: `Order #${order.orderNumber}`,
         prefill: {
           name: `${order.user.firstName} ${order.user.lastName}`,
@@ -70,22 +70,18 @@ export const createRazorpayOrder = async (
       },
     });
   } catch (error) {
-    console.error("Error in createRazorpayOrder:", error);
+    logger.error({ err: error, endpoint: 'createRazorpayOrder' }, 'Error in createRazorpayOrder');
     res.status(500).json({
-      status: "error",
-      message: "Failed to create payment order",
+      status: 'error',
+      message: 'Failed to create payment order',
     });
   }
 };
 
 // Create Razorpay order from cart data (without creating database order)
-export const createRazorpayOrderFromCart = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const createRazorpayOrderFromCart = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { cartData, userEmail, userPhone }: ICreateRazorpayOrderRequest =
-      req.body;
+    const { cartData, userEmail, userPhone }: ICreateRazorpayOrderRequest = req.body;
     const userId = req.user!.id;
 
     // Get user details
@@ -101,8 +97,8 @@ export const createRazorpayOrderFromCart = async (
 
     if (!user) {
       res.status(404).json({
-        status: "error",
-        message: "User not found",
+        status: 'error',
+        message: 'User not found',
       });
       return;
     }
@@ -116,8 +112,8 @@ export const createRazorpayOrderFromCart = async (
 
     if (!shippingAddress) {
       res.status(404).json({
-        status: "error",
-        message: "Shipping address not found",
+        status: 'error',
+        message: 'Shipping address not found',
       });
       return;
     }
@@ -131,14 +127,14 @@ export const createRazorpayOrderFromCart = async (
         });
         if (!variant || variant.product.id !== item.productId) {
           res.status(400).json({
-            status: "error",
+            status: 'error',
             message: `Invalid product variant: ${item.variantId}`,
           });
           return;
         }
         if (variant.price !== item.price) {
           res.status(400).json({
-            status: "error",
+            status: 'error',
             message: `Price mismatch for variant: ${item.variantId}`,
           });
           return;
@@ -149,14 +145,14 @@ export const createRazorpayOrderFromCart = async (
         });
         if (!product) {
           res.status(400).json({
-            status: "error",
+            status: 'error',
             message: `Product not found: ${item.productId}`,
           });
           return;
         }
         if (product.price !== item.price) {
           res.status(400).json({
-            status: "error",
+            status: 'error',
             message: `Price mismatch for product: ${item.productId}`,
           });
           return;
@@ -167,8 +163,8 @@ export const createRazorpayOrderFromCart = async (
 
     if (Math.abs(calculatedSubtotal - cartData.subtotal) > 0.01) {
       res.status(400).json({
-        status: "error",
-        message: "Subtotal calculation mismatch",
+        status: 'error',
+        message: 'Subtotal calculation mismatch',
       });
       return;
     }
@@ -177,11 +173,11 @@ export const createRazorpayOrderFromCart = async (
 
     const razorpayOrder = await razorpay.orders.create({
       amount: Math.round(cartData.total * 100),
-      currency: "INR",
+      currency: 'INR',
       receipt: receiptId,
       notes: {
         userId: userId,
-        type: "cart_payment",
+        type: 'cart_payment',
         itemCount: cartData.items.length.toString(),
       },
     });
@@ -191,62 +187,57 @@ export const createRazorpayOrderFromCart = async (
       cartData,
       userId,
       userEmail: userEmail || user.email,
-      userPhone: userPhone || user.phone || "",
+      userPhone: userPhone || user.phone || '',
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
     };
 
-    await redis.setex(
-      `temp_order:${razorpayOrder.id}`,
-      3600,
-      JSON.stringify(tempOrderData)
-    );
+    await redis.setex(`temp_order:${razorpayOrder.id}`, 3600, JSON.stringify(tempOrderData));
 
     res.json({
-      status: "success",
+      status: 'success',
       data: {
         orderId: razorpayOrder.id,
         amount: razorpayOrder.amount,
         currency: razorpayOrder.currency,
-        key: process.env.RAZORPAY_KEY_ID,
-        name: process.env.BUSINESS_NAME || "Kulangara",
+        key: env.RAZORPAY_KEY_ID,
+        name: env.BUSINESS_NAME || 'Kulangara',
         description: `Order for ${cartData.items.length} item(s)`,
         prefill: {
           email: userEmail || user.email,
-          contact: userPhone || user.phone || "",
+          contact: userPhone || user.phone || '',
         },
         theme: {
-          color: "#3B82F6",
+          color: '#3B82F6',
         },
       },
     });
   } catch (error) {
-    console.error("Error in createRazorpayOrderFromCart:", error);
+    logger.error(
+      { err: error, endpoint: 'createRazorpayOrderFromCart' },
+      'Error in createRazorpayOrderFromCart'
+    );
     res.status(500).json({
-      status: "error",
-      message: "Failed to create payment order",
+      status: 'error',
+      message: 'Failed to create payment order',
     });
   }
 };
 
-export const verifyPayment = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const verifyPayment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
-      req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
-    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const body = razorpay_order_id + '|' + razorpay_payment_id;
     const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
+      .createHmac('sha256', env.RAZORPAY_KEY_SECRET)
       .update(body)
-      .digest("hex");
+      .digest('hex');
 
     if (expectedSignature !== razorpay_signature) {
       res.status(400).json({
-        status: "error",
-        message: "Invalid payment signature",
+        status: 'error',
+        message: 'Invalid payment signature',
       });
       return;
     }
@@ -256,8 +247,8 @@ export const verifyPayment = async (
 
     if (!orderId) {
       res.status(400).json({
-        status: "error",
-        message: "Order ID not found in payment",
+        status: 'error',
+        message: 'Order ID not found in payment',
       });
       return;
     }
@@ -267,33 +258,30 @@ export const verifyPayment = async (
       data: {
         paymentStatus: PaymentStatus.PAID,
         paymentId: razorpay_payment_id,
-        status: "CONFIRMED",
+        status: 'CONFIRMED',
         statusHistory: {
           create: {
-            status: "CONFIRMED",
-            note: "Payment received and verified",
+            status: 'CONFIRMED',
+            note: 'Payment received and verified',
           },
         },
       },
     });
 
     res.json({
-      status: "success",
-      message: "Payment verified successfully",
+      status: 'success',
+      message: 'Payment verified successfully',
     });
   } catch (error) {
-    console.error("Error in verifyPayment:", error);
+    logger.error({ err: error, endpoint: 'verifyPayment' }, 'Error in verifyPayment');
     res.status(500).json({
-      status: "error",
-      message: "Failed to verify payment",
+      status: 'error',
+      message: 'Failed to verify payment',
     });
   }
 };
 
-export const verifyPaymentAndCreateOrder = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): Promise<void> => {
   try {
     const {
       razorpay_order_id,
@@ -304,37 +292,35 @@ export const verifyPaymentAndCreateOrder = async (
 
     const userId = req.user!.id;
 
-    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const body = razorpay_order_id + '|' + razorpay_payment_id;
     const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
+      .createHmac('sha256', env.RAZORPAY_KEY_SECRET)
       .update(body)
-      .digest("hex");
+      .digest('hex');
 
     if (expectedSignature !== razorpay_signature) {
       res.status(400).json({
-        status: "error",
-        message: "Invalid payment signature",
+        status: 'error',
+        message: 'Invalid payment signature',
       });
       return;
     }
 
     const payment = await razorpay.payments.fetch(razorpay_payment_id);
 
-    if (payment.status !== "captured") {
+    if (payment.status !== 'captured') {
       res.status(400).json({
-        status: "error",
-        message: "Payment not captured",
+        status: 'error',
+        message: 'Payment not captured',
       });
       return;
     }
 
-    const tempOrderDataString = await redis.get(
-      `temp_order:${razorpay_order_id}`
-    );
+    const tempOrderDataString = await redis.get(`temp_order:${razorpay_order_id}`);
     if (!tempOrderDataString) {
       res.status(400).json({
-        status: "error",
-        message: "Order session expired or not found",
+        status: 'error',
+        message: 'Order session expired or not found',
       });
       return;
     }
@@ -343,8 +329,8 @@ export const verifyPaymentAndCreateOrder = async (
 
     if (tempOrderData.userId !== userId) {
       res.status(400).json({
-        status: "error",
-        message: "User mismatch",
+        status: 'error',
+        message: 'User mismatch',
       });
       return;
     }
@@ -353,14 +339,14 @@ export const verifyPaymentAndCreateOrder = async (
       const timestamp = Date.now().toString().slice(-8);
       const random = Math.floor(Math.random() * 1000)
         .toString()
-        .padStart(3, "0");
+        .padStart(3, '0');
       return `KGR${timestamp}${random}`;
     };
 
     const generateTrackingNumber = (): string => {
-      const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-      let result = "KGR";
-      const randomBytes = require("crypto").randomBytes(10);
+      const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      let result = 'KGR';
+      const randomBytes = require('crypto').randomBytes(10);
       for (let i = 0; i < 10; i++) {
         result += chars[randomBytes[i] % chars.length];
       }
@@ -396,8 +382,8 @@ export const verifyPaymentAndCreateOrder = async (
 
       if (!coupon) {
         res.status(400).json({
-          status: "error",
-          message: "Invalid or expired coupon",
+          status: 'error',
+          message: 'Invalid or expired coupon',
         });
         return;
       }
@@ -415,7 +401,7 @@ export const verifyPaymentAndCreateOrder = async (
       const stockReservation = await reserveStock(stockItems, tx);
 
       if (!stockReservation.success) {
-        throw new Error(stockReservation.message || "Failed to reserve stock");
+        throw new Error(stockReservation.message || 'Failed to reserve stock');
       }
 
       const reservedItems = stockReservation.reservedItems!;
@@ -455,7 +441,7 @@ export const verifyPaymentAndCreateOrder = async (
         data: {
           orderId: order.id,
           status: OrderStatus.CONFIRMED,
-          note: "Order confirmed after successful payment",
+          note: 'Order confirmed after successful payment',
         },
       });
 
@@ -490,8 +476,8 @@ export const verifyPaymentAndCreateOrder = async (
     await redis.del(`temp_order:${razorpay_order_id}`);
 
     res.json({
-      status: "success",
-      message: "Payment verified and order created successfully",
+      status: 'success',
+      message: 'Payment verified and order created successfully',
       data: {
         verified: true,
         paymentId: razorpay_payment_id,
@@ -499,13 +485,16 @@ export const verifyPaymentAndCreateOrder = async (
       },
     });
   } catch (error) {
-    console.error("Error in verifyPaymentAndCreateOrder:", error);
+    logger.error(
+      { err: error, endpoint: 'verifyPaymentAndCreateOrder' },
+      'Error in verifyPaymentAndCreateOrder'
+    );
 
     // Handle stock-related errors with specific messages
-    const errorMessage = error instanceof Error ? error.message : "";
-    if (errorMessage && errorMessage.includes("Stock reservation failed")) {
+    const errorMessage = error instanceof Error ? error.message : '';
+    if (errorMessage && errorMessage.includes('Stock reservation failed')) {
       res.status(400).json({
-        status: "error",
+        status: 'error',
         message: errorMessage,
       });
       return;
@@ -513,73 +502,91 @@ export const verifyPaymentAndCreateOrder = async (
 
     if (
       errorMessage &&
-      (errorMessage.includes("Insufficient stock") ||
-        errorMessage.includes("not found"))
+      (errorMessage.includes('Insufficient stock') || errorMessage.includes('not found'))
     ) {
       res.status(400).json({
-        status: "error",
+        status: 'error',
         message:
-          "Some items in your cart are no longer available or out of stock. Please review your cart and try again.",
+          'Some items in your cart are no longer available or out of stock. Please review your cart and try again.',
       });
       return;
     }
 
     res.status(500).json({
-      status: "error",
-      message: "Failed to verify payment and create order",
+      status: 'error',
+      message: 'Failed to verify payment and create order',
     });
   }
 };
 
-export const handleWebhook = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const handleWebhook = async (req: Request, res: Response): Promise<void> => {
   try {
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
-    const signature = req.headers["x-razorpay-signature"];
+    const webhookSecret = env.RAZORPAY_WEBHOOK_SECRET;
+    const signature = getHeaderString(req.headers, 'x-razorpay-signature');
 
     if (!webhookSecret || !signature) {
       res.status(400).json({
-        status: "error",
-        message: "Missing webhook secret or signature",
+        status: 'error',
+        message: 'Missing webhook secret or signature',
       });
       return;
     }
 
     const expectedSignature = crypto
-      .createHmac("sha256", webhookSecret)
+      .createHmac('sha256', webhookSecret)
       .update(req.body)
-      .digest("hex");
+      .digest('hex');
 
     if (expectedSignature !== signature) {
       res.status(400).json({
-        status: "error",
-        message: "Invalid webhook signature",
+        status: 'error',
+        message: 'Invalid webhook signature',
       });
       return;
     }
 
     const event = JSON.parse(req.body.toString());
 
+    // Idempotency check: Use event ID to prevent duplicate processing
+    const eventId =
+      event.id || event.payload?.payment?.entity?.id || event.payload?.refund?.entity?.id;
+
+    if (eventId) {
+      const idempotencyKey = `webhook:${eventId}`;
+      const alreadyProcessed = await redis.get(idempotencyKey);
+
+      if (alreadyProcessed) {
+        // Event already processed, return success without reprocessing
+        logger.info(
+          { eventId, event: event.event },
+          'Webhook event already processed (idempotency)'
+        );
+        res.json({ status: 'success', message: 'Event already processed' });
+        return;
+      }
+
+      // Mark event as being processed (TTL: 24 hours)
+      await redis.set(idempotencyKey, '1', 'EX', 24 * 60 * 60);
+    }
+
     switch (event.event) {
-      case "payment.captured":
+      case 'payment.captured':
         await handlePaymentCaptured(event.payload.payment.entity);
         break;
-      case "payment.failed":
+      case 'payment.failed':
         await handlePaymentFailed(event.payload.payment.entity);
         break;
-      case "refund.processed":
+      case 'refund.processed':
         await handleRefundProcessed(event.payload.refund.entity);
         break;
     }
 
-    res.json({ status: "success" });
+    res.json({ status: 'success' });
   } catch (error) {
-    console.error("Error in handleWebhook:", error);
+    logger.error({ err: error, endpoint: 'handleWebhook' }, 'Error in handleWebhook');
     res.status(500).json({
-      status: "error",
-      message: "Failed to process webhook",
+      status: 'error',
+      message: 'Failed to process webhook',
     });
   }
 };
@@ -593,11 +600,11 @@ async function handlePaymentCaptured(payment: any) {
     data: {
       paymentStatus: PaymentStatus.PAID,
       paymentId: payment.id,
-      status: "CONFIRMED",
+      status: 'CONFIRMED',
       statusHistory: {
         create: {
-          status: "CONFIRMED",
-          note: "Payment captured successfully",
+          status: 'CONFIRMED',
+          note: 'Payment captured successfully',
         },
       },
     },
@@ -613,11 +620,11 @@ async function handlePaymentFailed(payment: any) {
     data: {
       paymentStatus: PaymentStatus.FAILED,
       paymentId: payment.id,
-      status: "CANCELLED",
+      status: 'CANCELLED',
       statusHistory: {
         create: {
-          status: "CANCELLED",
-          note: "Payment failed",
+          status: 'CANCELLED',
+          note: 'Payment failed',
         },
       },
     },
@@ -632,10 +639,10 @@ async function handleRefundProcessed(refund: any) {
     where: { id: orderId },
     data: {
       paymentStatus: PaymentStatus.REFUNDED,
-      status: "REFUNDED",
+      status: 'REFUNDED',
       statusHistory: {
         create: {
-          status: "REFUNDED",
+          status: 'REFUNDED',
           note: `Refund processed: ${refund.id}`,
         },
       },
@@ -643,10 +650,7 @@ async function handleRefundProcessed(refund: any) {
   });
 }
 
-export const updatePaymentStatus = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const updatePaymentStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id: orderId } = req.params;
     const { paymentStatus, note } = req.body;
@@ -663,8 +667,8 @@ export const updatePaymentStatus = async (
 
     if (!existingOrder) {
       res.status(404).json({
-        status: "error",
-        message: "Order not found",
+        status: 'error',
+        message: 'Order not found',
       });
       return;
     }
@@ -690,8 +694,8 @@ export const updatePaymentStatus = async (
     });
 
     res.json({
-      status: "success",
-      message: "Payment status updated successfully",
+      status: 'success',
+      message: 'Payment status updated successfully',
       data: {
         orderId: updatedOrder.id,
         paymentStatus: updatedOrder.paymentStatus,
@@ -699,20 +703,18 @@ export const updatePaymentStatus = async (
       },
     });
   } catch (error) {
-    console.error("Error in updatePaymentStatus:", error);
+    logger.error({ err: error, endpoint: 'updatePaymentStatus' }, 'Error in updatePaymentStatus');
     res.status(500).json({
-      status: "error",
-      message: "Failed to update payment status",
+      status: 'error',
+      message: 'Failed to update payment status',
     });
   }
 };
 
 export const cleanupExpiredTemporaryOrders = async (): Promise<void> => {
   try {
-    console.log(
-      "Cleanup function called - Redis keys auto-expire after 1 hour"
-    );
+    logger.debug('Cleanup function called - Redis keys auto-expire after 1 hour');
   } catch (error) {
-    console.error("Error cleaning up expired temporary orders:", error);
+    logger.error({ err: error }, 'Error cleaning up expired temporary orders');
   }
 };
