@@ -12,7 +12,10 @@ export const registerSchema = z.object({
       ),
     firstName: z.string().min(2, 'First name must be at least 2 characters'),
     lastName: z.string().min(2, 'Last name must be at least 2 characters'),
-    phone: z.string().regex(/^\d{10}$/, 'Invalid phone number').optional(),
+    phone: z
+      .string()
+      .regex(/^\d{10}$/, 'Invalid phone number')
+      .optional(),
   }),
 });
 
@@ -45,5 +48,11 @@ export const resetPasswordSchema = z.object({
         /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/,
         'Password must contain at least one uppercase letter, one lowercase letter, one number and one special character'
       ),
+  }),
+});
+
+export const googleAuthSchema = z.object({
+  body: z.object({
+    token: z.string().min(1, 'Google access token is required'),
   }),
 });
