@@ -1,5 +1,9 @@
 import { Router } from 'express';
-import { validateCartStock, getStockInfo, getProductOrderHistory } from '../controllers/cart-validation.controller';
+import {
+  validateCartStock,
+  getStockInfo,
+  getProductOrderHistory,
+} from '../controllers/cart-validation.controller';
 import { authenticate } from '../middleware/auth';
 
 const router = Router();

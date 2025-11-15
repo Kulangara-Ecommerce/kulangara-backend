@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import {
-    getCart,
-    addCartItem,
-    updateCartItem,
-    removeCartItem,
-    clearCart
+  getCart,
+  addCartItem,
+  updateCartItem,
+  removeCartItem,
+  clearCart,
 } from '../controllers/cart.controller';
 import { validateRequest } from '../middleware/validate';
 import { authenticate } from '../middleware/auth';

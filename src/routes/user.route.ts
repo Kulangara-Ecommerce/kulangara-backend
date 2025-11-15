@@ -1,24 +1,23 @@
 import { Router } from 'express';
 import {
-    getProfile,
-    updateProfile,
-    deleteAccount,
-    changePassword,
-    getAddresses,
-    createAddress,
-    updateAddress,
-    deleteAddress,
-    setDefaultAddress
+  getProfile,
+  updateProfile,
+  deleteAccount,
+  changePassword,
+  getAddresses,
+  createAddress,
+  updateAddress,
+  deleteAddress,
+  setDefaultAddress,
 } from '../controllers/user.controller';
 import { validateRequest } from '../middleware/validate';
-import { authenticate, authorize } from '../middleware/auth';
+import { authenticate } from '../middleware/auth';
 import {
-    updateProfileSchema,
-    changePasswordSchema,
-    createAddressSchema,
-    updateAddressSchema
+  updateProfileSchema,
+  changePasswordSchema,
+  createAddressSchema,
+  updateAddressSchema,
 } from '../validators/user.validator';
-import { Role } from '@prisma/client';
 
 const router = Router();
 

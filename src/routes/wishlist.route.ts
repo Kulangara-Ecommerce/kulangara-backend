@@ -1,9 +1,5 @@
 import { Router } from 'express';
-import {
-    getWishlist,
-    addToWishlist,
-    removeFromWishlist
-} from '../controllers/wishlist.controller';
+import { getWishlist, addToWishlist, removeFromWishlist } from '../controllers/wishlist.controller';
 import { validateRequest } from '../middleware/validate';
 import { authenticate } from '../middleware/auth';
 import { addToWishlistSchema } from '../validators/wishlist.validator';
