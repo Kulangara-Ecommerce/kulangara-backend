@@ -2,22 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../config/db';
 import { Role } from '@prisma/client';
+import { env } from '../config/env';
+import { isTokenBlacklisted, isUserBlacklisted } from '../services/tokenBlacklist.service';
 
 interface JwtPayload {
   userId: string;
   role: Role;
+  jti?: string;
 }
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id: string;
-        role: Role;
-      };
-    }
-  }
-}
+// Express Request types are extended in src/types/express.d.ts
 
 export const authenticate = async (
   req: Request,
@@ -35,10 +29,27 @@ export const authenticate = async (
       return;
     }
 
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET as string
-    ) as JwtPayload;
+    const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+
+    // Check if token is blacklisted
+    const isBlacklisted = await isTokenBlacklisted(token);
+    if (isBlacklisted) {
+      res.status(401).json({
+        status: 'error',
+        message: 'Token has been revoked',
+      });
+      return;
+    }
+
+    // Check if user is blacklisted (for security incidents)
+    const userBlacklisted = await isUserBlacklisted(decoded.userId);
+    if (userBlacklisted) {
+      res.status(401).json({
+        status: 'error',
+        message: 'Account access has been revoked',
+      });
+      return;
+    }
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
@@ -71,7 +82,8 @@ export const authenticate = async (
   }
 };
 
-export const authorize = (...roles: Role[]) =>
+export const authorize =
+  (...roles: Role[]) =>
   (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({
