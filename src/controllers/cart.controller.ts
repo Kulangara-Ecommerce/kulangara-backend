@@ -129,98 +129,102 @@ export const addCartItem = async (
       return;
     }
 
-    const updatedCart = await prisma.$transaction(async (prismaClient) => {
-      // Get or create cart
-      let cart = await prismaClient.cart.findUnique({
-        where: { userId },
-        include: { items: true },
-      });
-
-      if (!cart) {
-        cart = await prismaClient.cart.create({
-          data: {
-            userId,
-            subtotal: 0,
-            total: 0,
-          },
+    const updatedCart = await prisma.$transaction(
+      async (prismaClient) => {
+        let cart = await prismaClient.cart.findUnique({
+          where: { userId },
           include: { items: true },
         });
-      }
 
-      // Get product price
-      const product = await prismaClient.product.findUnique({
-        where: { id: productId },
-        select: { price: true, discountedPrice: true },
-      });
+        if (!cart) {
+          cart = await prismaClient.cart.create({
+            data: {
+              userId,
+              subtotal: 0,
+              total: 0,
+            },
+            include: { items: true },
+          });
+        }
 
-      if (!product) {
-        res.status(404).json({
-          status: 'error',
-          message: 'Product not found',
+        // Get product price
+        const product = await prismaClient.product.findUnique({
+          where: { id: productId },
+          select: { price: true, discountedPrice: true },
         });
-        return;
-      }
 
-      // Get variant price if applicable
-      let finalPrice = product.discountedPrice ?? product.price;
-      if (variantId) {
-        const variant = await prismaClient.productVariant.findUnique({
-          where: { id: variantId },
-          select: { price: true },
-        });
-        if (!variant) {
+        if (!product) {
           res.status(404).json({
             status: 'error',
-            message: 'Variant not found',
+            message: 'Product not found',
           });
           return;
         }
-        finalPrice = variant.price ?? product.price;
-      }
 
-      // Check if item already exists in cart
-      const existingItem = cart.items.find(
-        (item) => item.productId === productId && item.variantId === variantId
-      );
+        // Get variant price if applicable
+        let finalPrice = product.discountedPrice ?? product.price;
+        if (variantId) {
+          const variant = await prismaClient.productVariant.findUnique({
+            where: { id: variantId },
+            select: { price: true },
+          });
+          if (!variant) {
+            res.status(404).json({
+              status: 'error',
+              message: 'Variant not found',
+            });
+            return;
+          }
+          finalPrice = variant.price ?? product.price;
+        }
 
-      if (existingItem) {
-        // Update existing item
-        await prismaClient.cartItem.update({
-          where: { id: existingItem.id },
-          data: {
-            quantity: existingItem.quantity + quantity,
-            price: finalPrice,
-            subtotal: finalPrice * (existingItem.quantity + quantity),
+        // Check if item already exists in cart
+        const existingItem = cart.items.find(
+          (item) => item.productId === productId && item.variantId === variantId
+        );
+
+        if (existingItem) {
+          // Update existing item
+          await prismaClient.cartItem.update({
+            where: { id: existingItem.id },
+            data: {
+              quantity: existingItem.quantity + quantity,
+              price: finalPrice,
+              subtotal: finalPrice * (existingItem.quantity + quantity),
+            },
+          });
+        } else {
+          // Create new item
+          await prismaClient.cartItem.create({
+            data: {
+              cartId: cart.id,
+              productId,
+              variantId,
+              quantity,
+              price: finalPrice,
+              subtotal: finalPrice * quantity,
+            },
+          });
+        }
+
+        // Recalculate cart totals
+        const { subtotal, total } = await recalculateCartTotals(cart.id);
+
+        return await prismaClient.cart.update({
+          where: { id: cart.id },
+          data: { subtotal, total },
+          include: {
+            items: {
+              include: CART_ITEM_INCLUDE,
+            },
           },
         });
-      } else {
-        // Create new item
-        await prismaClient.cartItem.create({
-          data: {
-            cartId: cart.id,
-            productId,
-            variantId,
-            quantity,
-            price: finalPrice,
-            subtotal: finalPrice * quantity,
-          },
-        });
+      },
+      {
+        timeout: 600000,
+        maxWait: 600000,
       }
-
-      // Recalculate cart totals
-      const { subtotal, total } = await recalculateCartTotals(cart.id);
-
-      // Update cart with new totals
-      return await prismaClient.cart.update({
-        where: { id: cart.id },
-        data: { subtotal, total },
-        include: {
-          items: {
-            include: CART_ITEM_INCLUDE,
-          },
-        },
-      });
-    });
+    );
 
     // Invalidate cache
     await deleteCache(CACHE_KEYS.CART(userId));
@@ -264,45 +268,51 @@ export const updateCartItem = async (
       return;
     }
 
-    const updatedCart = await prisma.$transaction(async (prismaClient) => {
-      // Get cart item
-      const cartItem = await prismaClient.cartItem.findFirst({
-        where: {
-          id,
-          cart: { userId },
-        },
-      });
-
-      if (!cartItem) {
-        res.status(404).json({
-          status: 'error',
-          message: 'Cart item not found',
-        });
-        return;
-      }
-
-      // Update cart item
-      await prismaClient.cartItem.update({
-        where: { id },
-        data: {
-          quantity,
-          subtotal: cartItem.price * quantity,
-        },
-      });
-
-      // Recalculate and update cart totals
-      const { subtotal, total } = await recalculateCartTotals(cartItem.cartId);
-
-      return await prismaClient.cart.update({
-        where: { userId },
-        data: { subtotal, total },
-        include: {
-          items: {
-            include: CART_ITEM_INCLUDE,
+    const updatedCart = await prisma.$transaction(
+      async (prismaClient) => {
+        // Get cart item
+        const cartItem = await prismaClient.cartItem.findFirst({
+          where: {
+            id,
+            cart: { userId },
           },
-        },
-      });
-    });
+        });
+
+        if (!cartItem) {
+          res.status(404).json({
+            status: 'error',
+            message: 'Cart item not found',
+          });
+          return;
+        }
+
+        // Update cart item
+        await prismaClient.cartItem.update({
+          where: { id },
+          data: {
+            quantity,
+            subtotal: cartItem.price * quantity,
+          },
+        });
+
+        // Recalculate and update cart totals
+        const { subtotal, total } = await recalculateCartTotals(cartItem.cartId);
+
+        return await prismaClient.cart.update({
+          where: { userId },
+          data: { subtotal, total },
+          include: {
+            items: {
+              include: CART_ITEM_INCLUDE,
+            },
+          },
+        });
+      },
+      {
+        timeout: 600000,
+        maxWait: 600000,
+      }
+    );
 
     // Invalidate cache
     await deleteCache(CACHE_KEYS.CART(userId));
@@ -345,41 +355,47 @@ export const removeCartItem = async (
       return;
     }
 
-    const updatedCart = await prisma.$transaction(async (prismaClient) => {
-      // Get cart item
-      const cartItem = await prismaClient.cartItem.findFirst({
-        where: {
-          id,
-          cart: { userId },
-        },
-      });
-
-      if (!cartItem) {
-        res.status(404).json({
-          status: 'error',
-          message: 'Cart item not found',
-        });
-        return;
-      }
-
-      // Delete cart item
-      await prismaClient.cartItem.delete({
-        where: { id },
-      });
-
-      // Recalculate and update cart totals
-      const { subtotal, total } = await recalculateCartTotals(cartItem.cartId);
-
-      return await prismaClient.cart.update({
-        where: { userId },
-        data: { subtotal, total },
-        include: {
-          items: {
-            include: CART_ITEM_INCLUDE,
+    const updatedCart = await prisma.$transaction(
+      async (prismaClient) => {
+        // Get cart item
+        const cartItem = await prismaClient.cartItem.findFirst({
+          where: {
+            id,
+            cart: { userId },
           },
-        },
-      });
-    });
+        });
+
+        if (!cartItem) {
+          res.status(404).json({
+            status: 'error',
+            message: 'Cart item not found',
+          });
+          return;
+        }
+
+        // Delete cart item
+        await prismaClient.cartItem.delete({
+          where: { id },
+        });
+
+        // Recalculate and update cart totals
+        const { subtotal, total } = await recalculateCartTotals(cartItem.cartId);
+
+        return await prismaClient.cart.update({
+          where: { userId },
+          data: { subtotal, total },
+          include: {
+            items: {
+              include: CART_ITEM_INCLUDE,
+            },
+          },
+        });
+      },
+      {
+        timeout: 600000,
+        maxWait: 600000,
+      }
+    );
 
     // Invalidate cache
     await deleteCache(CACHE_KEYS.CART(userId));
@@ -429,24 +445,30 @@ export const clearCart = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const updatedCart = await prisma.$transaction(async (prismaClient) => {
-      await prismaClient.cartItem.deleteMany({
-        where: {
-          cartId: cart.id,
-        },
-      });
+    const updatedCart = await prisma.$transaction(
+      async (prismaClient) => {
+        await prismaClient.cartItem.deleteMany({
+          where: {
+            cartId: cart.id,
+          },
+        });
 
-      return await prismaClient.cart.update({
-        where: { userId },
-        data: {
-          subtotal: 0,
-          total: 0,
-        },
-        include: {
-          items: true,
-        },
-      });
-    });
+        return await prismaClient.cart.update({
+          where: { userId },
+          data: {
+            subtotal: 0,
+            total: 0,
+          },
+          include: {
+            items: true,
+          },
+        });
+      },
+      {
+        timeout: 600000,
+        maxWait: 600000,
+      }
+    );
 
     await deleteCache(CACHE_KEYS.CART(userId));
 
