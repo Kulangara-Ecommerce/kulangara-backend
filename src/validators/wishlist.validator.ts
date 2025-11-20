@@ -1,18 +1,18 @@
 import { z } from 'zod';
-import { ObjectId } from 'bson';
+// import { ObjectId } from 'bson';
 
 // Validate MongoDB ObjectId
-const isValidObjectId = (id: string): boolean => {
-  try {
-    return ObjectId.isValid(id);
-  } catch {
-    return false;
-  }
-};
+// const isValidObjectId = (id: string): boolean => {
+//   try {
+//     return ObjectId.isValid(id);
+//   } catch {
+//     return false;
+//   }
+// };
 
 export const addToWishlistSchema = z.object({
   body: z.object({
-    productId: z.string().refine(isValidObjectId, {
+    productId: z.string().refine((id) => id, {
       message: 'Invalid product ID format',
     }),
   }),

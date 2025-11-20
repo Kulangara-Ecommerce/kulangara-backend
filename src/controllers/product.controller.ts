@@ -8,7 +8,7 @@ import {
   deleteProductImage as deleteS3Image,
 } from '../services/upload.service';
 import { cacheWrapper, deleteCachePattern, deleteCache } from '../services/cache.service';
-import { ObjectId } from 'bson';
+// import { ObjectId } from 'bson';
 import {
     IProductCreate,
     IProductUpdate,
@@ -32,13 +32,13 @@ const CACHE_KEYS = {
 };
 
 // Validate MongoDB ObjectId
-const isValidObjectId = (id: string): boolean => {
-    try {
-        return ObjectId.isValid(id);
-    } catch {
-        return false;
-    }
-};
+// const isValidObjectId = (id: string): boolean => {
+//     try {
+//         return ObjectId.isValid(id);
+//     } catch {
+//         return false;
+//     }
+// };
 
 export const listProductsAdmin = async (
     req: Request<{}, {}, {}, IProductFilters>,
@@ -326,7 +326,7 @@ export const getProductById = async (
     const { id } = req.params; //product/123
 
         // Validate ObjectId
-        if (!isValidObjectId(id)) {
+        if (!id) {
             res.status(400).json({
                 status: 'error',
         message: 'Invalid product ID format',
@@ -404,7 +404,7 @@ export const createProduct = async (
 ): Promise<void> => {
     try {
         // Validate categoryId format first
-        if (!isValidObjectId(req.body.categoryId)) {
+        if (!req.body.categoryId) {
             res.status(400).json({
                 status: 'error',
         message: 'Invalid category ID format',

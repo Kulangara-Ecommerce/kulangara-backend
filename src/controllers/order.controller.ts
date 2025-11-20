@@ -3,12 +3,13 @@ import { prisma } from '../config/db';
 import { Prisma, OrderStatus, PaymentStatus, DiscountType } from '@prisma/client';
 import { cacheWrapper, deleteCachePattern, deleteCache } from '../services/cache.service';
 import { reserveStock, restoreStock, StockItem } from '../services/stock.service';
-import { ObjectId } from 'bson';
+// import { ObjectId } from 'bson';
 import {
   IOrderCreate,
   IOrderStatusUpdate,
   IOrderFilters,
 } from '../types/order.types';
+import { v4 as uuid } from 'uuid';
 
 // Cache keys
 const CACHE_KEYS = {
@@ -18,13 +19,13 @@ const CACHE_KEYS = {
 };
 
 // Validate MongoDB ObjectId
-const isValidObjectId = (id: string): boolean => {
-  try {
-    return ObjectId.isValid(id);
-  } catch {
-    return false;
-  }
-};
+// const isValidObjectId = (id: string): boolean => {
+//   try {
+//     return ObjectId.isValid(id);
+//   } catch {
+//     return false;
+//   }
+// };
 
 // Generate tracking number using crypto for better compatibility
 const generateTrackingNumber = (): string => {
@@ -137,7 +138,7 @@ export const getOrderById = async (req: Request<{ id: string }>, res: Response):
     const { id } = req.params;
     const userId = req.user!.id;
 
-    if (!isValidObjectId(id)) {
+    if (!id) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid order ID format',
@@ -309,7 +310,7 @@ export const createOrder = async (
       const order = await prisma.order.create({
         data: {
           userId,
-          orderNumber: new ObjectId().toHexString(),
+          orderNumber: uuid(),
           shippingAddressId,
           paymentMethod,
           status: orderStatus,

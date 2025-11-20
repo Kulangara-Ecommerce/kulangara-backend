@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { Prisma } from '@prisma/client';
 import { cacheWrapper, deleteCachePattern, deleteCache } from '../services/cache.service';
-import { ObjectId } from 'bson';
+// import { ObjectId } from 'bson';
 import { ICouponCreate, ICouponUpdate } from '../types/coupon.types';
 
 // Cache keys
@@ -13,13 +13,13 @@ const CACHE_KEYS = {
 };
 
 // Validate MongoDB ObjectId
-const isValidObjectId = (id: string): boolean => {
-  try {
-    return ObjectId.isValid(id);
-  } catch {
-    return false;
-  }
-};
+// const isValidObjectId = (id: string): boolean => {
+//   try {
+//     return ObjectId.isValid(id);
+//   } catch {
+//     return false;
+//   }
+// };
 
 // List coupons (admin only)
 export const listCoupons = async (req: Request, res: Response): Promise<void> => {
@@ -122,7 +122,7 @@ export const updateCoupon = async (
   try {
     const { id } = req.params;
 
-    if (!isValidObjectId(id)) {
+    if (!id) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid coupon ID format',
@@ -170,7 +170,7 @@ export const deleteCoupon = async (req: Request, res: Response): Promise<void> =
   try {
     const { id } = req.params;
 
-    if (!id || !isValidObjectId(id)) {
+    if (!id) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid coupon ID format',

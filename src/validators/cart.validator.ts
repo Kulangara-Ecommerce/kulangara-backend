@@ -1,23 +1,23 @@
 import { z } from 'zod';
-import { ObjectId } from 'bson';
+// import { ObjectId } from 'bson';
 
 // Validate MongoDB ObjectId
-const isValidObjectId = (id: string): boolean => {
-  try {
-    return ObjectId.isValid(id);
-  } catch {
-    return false;
-  }
-};
+// const isValidObjectId = (id: string): boolean => {
+//   try {
+//     return ObjectId.isValid(id);
+//   } catch {
+//     return false;
+//   }
+// };
 
 export const addCartItemSchema = z.object({
   body: z.object({
-    productId: z.string().refine(isValidObjectId, {
+    productId: z.string().refine((id) => id, {
       message: 'Invalid product ID format',
     }),
     variantId: z
       .string()
-      .refine(isValidObjectId, {
+      .refine((id) => id, {
         message: 'Invalid variant ID format',
       })
       .optional(),
@@ -30,7 +30,7 @@ export const updateCartItemSchema = z.object({
     quantity: z.number().int().positive(),
   }),
   params: z.object({
-    id: z.string().refine(isValidObjectId, {
+    id: z.string().refine((id) => id, {
       message: 'Invalid item ID format',
     }),
   }),

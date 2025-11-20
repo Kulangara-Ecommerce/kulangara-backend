@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { ICartItemCreate, ICartItemUpdate } from '../types/cart.types';
-import { ObjectId } from 'bson';
+// import { ObjectId } from 'bson';
 import createError from 'http-errors';
 import { cacheWrapper, deleteCache } from '../services/cache.service';
 
@@ -32,13 +32,13 @@ const CART_ITEM_INCLUDE = {
 };
 
 // Validate MongoDB ObjectId
-const isValidObjectId = (id: string): boolean => {
-  try {
-    return ObjectId.isValid(id);
-  } catch {
-    return false;
-  }
-};
+// const isValidObjectId = (id: string): boolean => {
+//   try {
+//     return ObjectId.isValid(id);
+//   } catch {
+//     return false;
+//   }
+// };
 
 // Utility function to recalculate cart totals
 const recalculateCartTotals = async (cartId: string) => {
@@ -113,7 +113,7 @@ export const addCartItem = async (
     const userId = req.user!.id;
     const { productId, variantId, quantity } = req.body;
 
-    if (!isValidObjectId(productId)) {
+    if (!productId) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid product ID',
@@ -121,7 +121,7 @@ export const addCartItem = async (
       return;
     }
 
-    if (variantId !== undefined && !isValidObjectId(variantId)) {
+    if (variantId !== undefined && !variantId) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid variant ID',
@@ -256,7 +256,7 @@ export const updateCartItem = async (
     const { id } = req.params;
     const { quantity } = req.body;
 
-    if (!isValidObjectId(id)) {
+    if (!id) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid item ID',
@@ -337,7 +337,7 @@ export const removeCartItem = async (
     const userId = req.user!.id;
     const { id } = req.params;
 
-    if (!isValidObjectId(id)) {
+    if (!id) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid item ID',

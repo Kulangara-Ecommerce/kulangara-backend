@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
-import { ObjectId } from 'bson';
+// import { ObjectId } from 'bson';
 import createError from 'http-errors';
 import { cacheWrapper, deleteCache } from '../services/cache.service';
 
@@ -10,13 +10,13 @@ const CACHE_KEYS = {
 };
 
 // Validate MongoDB ObjectId
-const isValidObjectId = (id: string): boolean => {
-  try {
-    return ObjectId.isValid(id);
-  } catch {
-    return false;
-  }
-};
+// const isValidObjectId = (id: string): boolean => {
+//    try {
+//     return ObjectId.isValid(id);
+//   } catch {
+//     return false;
+//   }
+// };
 
 // Get wishlist
 export const getWishlist = async (req: Request, res: Response): Promise<void> => {
@@ -85,7 +85,7 @@ export const addToWishlist = async (
 
     const { productId } = req.body;
 
-    if (!isValidObjectId(productId)) {
+    if (!productId) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid product ID',
@@ -175,7 +175,7 @@ export const removeFromWishlist = async (
 
     const { id: productId } = req.params;
 
-    if (!isValidObjectId(productId)) {
+    if (!productId) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid product ID',

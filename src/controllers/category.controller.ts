@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { Prisma } from '@prisma/client';
-import { ObjectId } from 'bson';
+// import { ObjectId } from 'bson';
 import { cacheWrapper, deleteCachePattern, deleteCache } from '../services/cache.service';
 import { ICategoryCreate, ICategoryUpdate, ICategoryFilters } from '../types/category.types';
 
@@ -13,13 +13,13 @@ const CACHE_KEYS = {
 };
 
 // Validate MongoDB ObjectId
-const isValidObjectId = (id: string): boolean => {
-  try {
-    return ObjectId.isValid(id);
-  } catch {
-    return false;
-  }
-};
+// const isValidObjectId = (id: string): boolean => {
+//   try {
+//     return ObjectId.isValid(id);
+//   } catch {
+//     return false;
+//   }
+// };
 
 // List categories with filters
 export const listCategories = async (
@@ -108,7 +108,7 @@ export const getCategoryById = async (
   try {
     const { id } = req.params;
 
-    if (!isValidObjectId(id)) {
+      if (!id) {
       res.status(400).json({
         status: 'error',
         message: 'Invalid category ID format',
