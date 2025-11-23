@@ -32,6 +32,7 @@ app.use(
       'http://localhost:4200',
       'http://localhost:5173',
       'https://kulangara.org',
+      'https://www.kulangara.org',
     ],
     credentials: true,
   })
