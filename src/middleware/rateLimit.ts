@@ -1,6 +1,13 @@
 import rateLimit from 'express-rate-limit';
 import { RATE_LIMIT_WINDOW, RATE_LIMIT_MAX } from '../constants';
 
+// Shared validate config to silence the X-Forwarded-For + trust proxy warning
+const validateConfig = {
+  // We know we're behind Nginx and already called app.set('trust proxy', 1)
+  // so we don't need express-rate-limit to enforce this.
+  xForwardedForHeader: false,
+};
+
 // General API rate limiter
 export const apiLimiter = rateLimit({
   windowMs: RATE_LIMIT_WINDOW.API,
@@ -10,7 +17,8 @@ export const apiLimiter = rateLimit({
     message: 'Too many requests from this IP, please try again later.',
   },
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  legacyHeaders: false,  // Disable the `X-RateLimit-*` headers
+  validate: validateConfig,
 });
 
 // Strict rate limiter for authentication endpoints
@@ -24,6 +32,7 @@ export const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true, // Don't count successful requests
+  validate: validateConfig,
 });
 
 // Rate limiter for password reset (more restrictive)
@@ -36,6 +45,7 @@ export const passwordResetLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: validateConfig,
 });
 
 // Rate limiter for registration
@@ -48,6 +58,7 @@ export const registerLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: validateConfig,
 });
 
 // Rate limiter for email verification resend
@@ -60,4 +71,5 @@ export const emailVerificationLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: validateConfig,
 });
