@@ -20,6 +20,7 @@ import { logger } from './utils/logger';
 import { requestIdMiddleware } from './middleware/requestId';
 
 const app = express();
+app.set('trust proxy', 1);
 const port = env.PORT;
 
 app.use(morgan('dev'));
