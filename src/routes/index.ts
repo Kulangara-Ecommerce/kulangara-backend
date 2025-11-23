@@ -25,4 +25,4 @@ router.use('/admin', adminRouter);
 router.use('/payments', paymentRouter);
 router.use('/stock', stockRouter);
 
-export default router; 
+export default router;

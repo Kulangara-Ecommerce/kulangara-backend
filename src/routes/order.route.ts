@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import {
-    listOrders,
-    getOrderById,
-    createOrder,
-    cancelOrder,
-    trackOrder,
-    listAllOrders,
-    updateOrderStatus
+  listOrders,
+  getOrderById,
+  createOrder,
+  cancelOrder,
+  trackOrder,
+  listAllOrders,
+  updateOrderStatus,
 } from '../controllers/order.controller';
 import { updatePaymentStatus } from '../controllers/payment.controller';
 import { authenticate, authorize } from '../middleware/auth';
@@ -28,18 +28,22 @@ router.post('/:id/cancel', cancelOrder);
 router.get('/:id/track', trackOrder);
 
 // Admin routes
-router.get('/admin/list', authorize(Role.DELIVERY_PARTNER, Role.ADMIN, Role.SUPER_ADMIN), listAllOrders);
-router.put(
-    '/admin/:id/status',
-    authorize(Role.DELIVERY_PARTNER, Role.ADMIN, Role.SUPER_ADMIN),
-    validateRequest(updateOrderStatusSchema),
-    updateOrderStatus
+router.get(
+  '/admin/list',
+  authorize(Role.DELIVERY_PARTNER, Role.ADMIN, Role.SUPER_ADMIN),
+  listAllOrders
 );
 router.put(
-    '/admin/:id/payment-status',
-    authorize(Role.ADMIN, Role.SUPER_ADMIN),
-    validateRequest(updatePaymentStatusSchema),
-    updatePaymentStatus
+  '/admin/:id/status',
+  authorize(Role.DELIVERY_PARTNER, Role.ADMIN, Role.SUPER_ADMIN),
+  validateRequest(updateOrderStatusSchema),
+  updateOrderStatus
+);
+router.put(
+  '/admin/:id/payment-status',
+  authorize(Role.ADMIN, Role.SUPER_ADMIN),
+  validateRequest(updatePaymentStatusSchema),
+  updatePaymentStatus
 );
 
 export default router;

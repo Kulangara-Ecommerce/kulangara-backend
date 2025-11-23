@@ -1,19 +1,17 @@
-import * as React from "react";
+import * as React from 'react';
 import {
   Body,
   Container,
   Head,
   Heading,
   Html,
-  Link,
   Preview,
   Section,
   Text,
   Hr,
-  Img,
   Button,
   Tailwind,
-} from "@react-email/components";
+} from '@react-email/components';
 
 interface AdminEmailProps {
   subject?: string;
@@ -25,14 +23,13 @@ interface AdminEmailProps {
 }
 
 export const AdminEmail = ({
-  subject = "Important Message",
-  previewText = "Message from Kulangara Admin",
+  subject = 'Important Message',
+  previewText = 'Message from Kulangara Admin',
   content,
   buttonText,
   buttonUrl,
-  footerText = "This is an automated message from Kulangara Admin.",
+  footerText = 'This is an automated message from Kulangara Admin.',
 }: AdminEmailProps) => {
-  const baseUrl = process.env.APP_URL || "http://localhost:3000";
 
   return (
     <Html>
@@ -56,9 +53,7 @@ export const AdminEmail = ({
             <Heading className="text-black text-[24px] font-normal text-center p-0 my-[30px] mx-0">
               {subject}
             </Heading>
-            <Text className="text-black text-[14px] leading-[24px]">
-              {content}
-            </Text>
+            <Text className="text-black text-[14px] leading-[24px]">{content}</Text>
             {buttonText && buttonUrl && (
               <Section className="text-center mt-[32px] mb-[32px]">
                 <Button
@@ -70,9 +65,7 @@ export const AdminEmail = ({
               </Section>
             )}
             <Hr className="border border-solid border-[#eaeaea] my-[26px] mx-0 w-full" />
-            <Text className="text-[#666666] text-[12px] leading-[24px]">
-              {footerText}
-            </Text>
+            <Text className="text-[#666666] text-[12px] leading-[24px]">{footerText}</Text>
           </Container>
         </Body>
       </Tailwind>

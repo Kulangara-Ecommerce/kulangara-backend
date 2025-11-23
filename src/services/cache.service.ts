@@ -1,7 +1,9 @@
 import redis from '../config/redis';
+import { logger } from '../utils/logger';
+import { CACHE_TTL } from '../constants';
 
 // Default cache duration (1 hour)
-const DEFAULT_CACHE_DURATION = 3600;
+const DEFAULT_CACHE_DURATION = CACHE_TTL.DEFAULT;
 
 /**
  * Get data from cache
@@ -9,15 +11,14 @@ const DEFAULT_CACHE_DURATION = 3600;
  * @returns Cached data or null
  */
 export const getCache = async <T>(key: string): Promise<T | null> => {
-    console.log('Getting cache for key:', key);
-    try {
-        const data = await redis.get(key);
-        console.log('Cache result:', data ? 'HIT' : 'MISS');
-        return data ? JSON.parse(data) : null;
-    } catch (error: unknown) {
-        console.warn('Cache get failed:', error instanceof Error ? error.message : 'Unknown error');
-        return null;
-    }
+  try {
+    const data = await redis.get(key);
+    logger.debug({ key, hit: !!data }, 'Cache lookup');
+    return data ? JSON.parse(data) : null;
+  } catch (error: unknown) {
+    logger.warn({ err: error, key }, 'Cache get failed');
+    return null;
+  }
 };
 
 /**
@@ -27,17 +28,16 @@ export const getCache = async <T>(key: string): Promise<T | null> => {
  * @param duration Cache duration in seconds
  */
 export const setCache = async <T>(
-    key: string,
-    data: T,
-    duration: number = DEFAULT_CACHE_DURATION
+  key: string,
+  data: T,
+  duration: number = DEFAULT_CACHE_DURATION
 ): Promise<void> => {
-    console.log('Setting cache for key:', key, 'duration:', duration);
-    try {
-        await redis.set(key, JSON.stringify(data), 'EX', duration);
-        console.log('Cache set successfully');
-    } catch (error: unknown) {
-        console.warn('Cache set failed:', error instanceof Error ? error.message : 'Unknown error');
-    }
+  try {
+    await redis.set(key, JSON.stringify(data), 'EX', duration);
+    logger.debug({ key, duration }, 'Cache set');
+  } catch (error: unknown) {
+    logger.warn({ err: error, key }, 'Cache set failed');
+  }
 };
 
 /**
@@ -45,9 +45,8 @@ export const setCache = async <T>(
  * @param key Cache key
  */
 export const deleteCache = async (key: string): Promise<void> => {
-    console.log('Deleting cache for key:', key);
-    await redis.del(key);
-    console.log('Cache deleted successfully');
+  await redis.del(key);
+  logger.debug({ key }, 'Cache deleted');
 };
 
 /**
@@ -55,13 +54,11 @@ export const deleteCache = async (key: string): Promise<void> => {
  * @param pattern Pattern to match keys
  */
 export const deleteCachePattern = async (pattern: string): Promise<void> => {
-    console.log('Deleting cache pattern:', pattern);
-    const keys = await redis.keys(pattern);
-    console.log('Found keys:', keys);
-    if (keys.length > 0) {
-        await redis.del(keys);
-        console.log('Deleted keys successfully');
-    }
+  const keys = await redis.keys(pattern);
+  if (keys.length > 0) {
+    await redis.del(keys);
+    logger.debug({ pattern, count: keys.length }, 'Cache pattern deleted');
+  }
 };
 
 /**
@@ -72,31 +69,29 @@ export const deleteCachePattern = async (pattern: string): Promise<void> => {
  * @returns Function result
  */
 export const cacheWrapper = async <T>(
-    key: string,
-    fn: () => Promise<T>,
-    duration: number = DEFAULT_CACHE_DURATION
+  key: string,
+  fn: () => Promise<T>,
+  duration: number = DEFAULT_CACHE_DURATION
 ): Promise<T> => {
-    console.log('Cache wrapper called for key:', key);
-    
-    try {
-        const cached = await getCache<T>(key);
-        if (cached) {
-            console.log('Returning cached data');
-            return cached;
-        }
-    } catch (error: any) {
-        console.warn('Cache read failed, proceeding without cache:', error.message);
+  try {
+    const cached = await getCache<T>(key);
+    if (cached) {
+      logger.debug({ key }, 'Cache hit');
+      return cached;
     }
+  } catch (error: unknown) {
+    logger.warn({ err: error, key }, 'Cache read failed, proceeding without cache');
+  }
 
-    console.log('Cache miss or error, executing function');
-    const data = await fn();
-    
-    try {
-        await setCache(key, data, duration);
-        console.log('New data cached successfully');
-    } catch (error: any) {
-        console.warn('Cache write failed, data still returned:', error.message);
-    }
-    
-    return data;
+  logger.debug({ key }, 'Cache miss, executing function');
+  const data = await fn();
+
+  try {
+    await setCache(key, data, duration);
+    logger.debug({ key }, 'Data cached');
+  } catch (error: unknown) {
+    logger.warn({ err: error, key }, 'Cache write failed, data still returned');
+  }
+
+  return data;
 };

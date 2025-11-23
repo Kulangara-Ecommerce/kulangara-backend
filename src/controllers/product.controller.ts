@@ -1,27 +1,25 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../config/db';
 import { Gender, Prisma } from '@prisma/client';
-import createError, { HttpError } from 'http-errors';
-import { generateProductImageUploadURL, deleteProductImage as deleteS3Image } from '../services/upload.service';
-import { cacheWrapper, deleteCachePattern, deleteCache } from '../services/cache.service';
-import { ObjectId } from 'bson';
+import createError from 'http-errors';
+import { UnauthorizedError } from '../utils/errors';
 import {
-    IProduct,
+  generateProductImageUploadURL,
+  deleteProductImage as deleteS3Image,
+} from '../services/upload.service';
+import { cacheWrapper, deleteCachePattern, deleteCache } from '../services/cache.service';
+// import { ObjectId } from 'bson';
+import {
     IProductCreate,
     IProductUpdate,
-    IProductImage,
     IProductImageCreate,
-    IProductReview,
     IProductReviewCreate,
     IProductFilters,
-    IProductImageUploadUrl,
-    IReview,
     IReviewUpdate,
     IReviewFilters,
-    IProductVariant,
     IProductVariantCreate,
     IProductVariantUpdate,
-    IProductVariantBulkCreate
+  IProductVariantBulkCreate,
 } from '../types/product.types';
 
 // Cache keys
@@ -30,17 +28,17 @@ const CACHE_KEYS = {
     FEATURED_PRODUCTS: 'products:featured',
     PRODUCT_DETAILS: (id: string) => `products:details:${id}`,
     PRODUCT_REVIEWS: (id: string) => `products:${id}:reviews`,
-    PRODUCT_SEARCH: (query: string) => `products:search:${query}`
+  PRODUCT_SEARCH: (query: string) => `products:search:${query}`,
 };
 
 // Validate MongoDB ObjectId
-const isValidObjectId = (id: string): boolean => {
-    try {
-        return ObjectId.isValid(id);
-    } catch {
-        return false;
-    }
-};
+// const isValidObjectId = (id: string): boolean => {
+//     try {
+//         return ObjectId.isValid(id);
+//     } catch {
+//         return false;
+//     }
+// };
 
 export const listProductsAdmin = async (
     req: Request<{}, {}, {}, IProductFilters>,
@@ -57,7 +55,7 @@ export const listProductsAdmin = async (
             isActive,
             isFeatured,
             sortBy = 'createdAt',
-            sortOrder = 'desc'
+      sortOrder = 'desc',
         } = req.query;
 
         const normalizedQuery = {
@@ -70,7 +68,7 @@ export const listProductsAdmin = async (
             isActive: typeof isActive === 'string' ? isActive === 'true' : undefined,
             isFeatured: typeof isFeatured === 'string' ? isFeatured === 'true' : undefined,
             sortBy,
-            sortOrder
+      sortOrder,
         };
 
         // Create cache key based on query parameters
@@ -86,8 +84,8 @@ export const listProductsAdmin = async (
                     gender: normalizedQuery.gender as Gender,
                     price: {
                         gte: normalizedQuery.minPrice,
-                        lte: normalizedQuery.maxPrice
-                    }
+            lte: normalizedQuery.maxPrice,
+          },
                 };
 
                 const [products, total] = await Promise.all([
@@ -96,15 +94,15 @@ export const listProductsAdmin = async (
                         include: {
                             category: true,
                             images: true,
-                            variants: true
+              variants: true,
                         },
                         skip: (normalizedQuery.page - 1) * normalizedQuery.limit,
                         take: normalizedQuery.limit,
                         orderBy: {
-                            [String(normalizedQuery.sortBy)]: normalizedQuery.sortOrder
-                        }
+              [String(normalizedQuery.sortBy)]: normalizedQuery.sortOrder,
+            },
                     }),
-                    prisma.product.count({ where })
+          prisma.product.count({ where }),
                 ]);
 
                 return {
@@ -113,8 +111,8 @@ export const listProductsAdmin = async (
                         total,
                         page: Number(page),
                         limit: Number(limit),
-                        totalPages: Math.ceil(total / Number(limit))
-                    }
+            totalPages: Math.ceil(total / Number(limit)),
+          },
                 };
             },
             300 // Cache for 5 minutes
@@ -122,13 +120,13 @@ export const listProductsAdmin = async (
 
         res.json({
             status: 'success',
-            data: result
+      data: result,
         });
     } catch (error) {
         console.error('Error in listProductsAdmin:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to fetch products'
+      message: 'Failed to fetch products',
         });
     }
 };
@@ -149,7 +147,7 @@ export const listProducts = async (
             isActive,
             isFeatured,
             sortBy = 'createdAt',
-            sortOrder = 'desc'
+      sortOrder = 'desc',
         } = req.query;
 
         //products?page=3&limit=10&category=123&minPrice=100&maxPrice=1000&gender=male&isActive=true&isFeatured=true&sortBy=createdAt&sortOrder=desc
@@ -164,7 +162,7 @@ export const listProducts = async (
             isActive: typeof isActive === 'string' ? isActive === 'true' : undefined,
             isFeatured: typeof isFeatured === 'string' ? isFeatured === 'true' : undefined,
             sortBy,
-            sortOrder
+      sortOrder,
         };
 
         // Create cache key based on query parameters
@@ -180,8 +178,8 @@ export const listProducts = async (
                     gender: normalizedQuery.gender as Gender,
                     price: {
                         gte: normalizedQuery.minPrice,
-                        lte: normalizedQuery.maxPrice
-                    }
+            lte: normalizedQuery.maxPrice,
+          },
                 };
 
                 const [products, total] = await Promise.all([
@@ -191,16 +189,16 @@ export const listProducts = async (
                             category: true,
                             images: {
                                 where: { isPrimary: true },
-                                take: 1
-                            }
+                take: 1,
                         },
-                        skip: (normalizedQuery.page - 1) * normalizedQuery.limit,    //(3-1) * 10
+            },
+            skip: (normalizedQuery.page - 1) * normalizedQuery.limit, //(3-1) * 10
                         take: normalizedQuery.limit,
                         orderBy: {
-                            [String(normalizedQuery.sortBy)]: normalizedQuery.sortOrder
-                        }
+              [String(normalizedQuery.sortBy)]: normalizedQuery.sortOrder,
+            },
                     }),
-                    prisma.product.count({ where })
+          prisma.product.count({ where }),
                 ]);
 
                 return {
@@ -209,8 +207,8 @@ export const listProducts = async (
                         total,
                         page: Number(page),
                         limit: Number(limit),
-                        totalPages: Math.ceil(total / Number(limit))
-                    }
+            totalPages: Math.ceil(total / Number(limit)),
+          },
                 };
             },
             300 // Cache for 5 minutes
@@ -218,21 +216,20 @@ export const listProducts = async (
 
         res.json({
             status: 'success',
-            data: result
+      data: result,
         });
     } catch (error) {
         console.error('Error in listProducts:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to fetch products'
+      message: 'Failed to fetch products',
         });
     }
 };
 
 // Get featured products
-export const getFeaturedProducts = async (req: Request, res: Response): Promise<void> => {
+export const getFeaturedProducts = async (_req: Request, res: Response): Promise<void> => {
     try {
-
         const cacheKey = CACHE_KEYS.FEATURED_PRODUCTS;
 
         const result = await cacheWrapper(
@@ -241,16 +238,16 @@ export const getFeaturedProducts = async (req: Request, res: Response): Promise<
                 const products = await prisma.product.findMany({
                     where: {
                         isFeatured: true,
-                        isActive: true
+            isActive: true,
                     },
                     include: {
                         category: true,
                         images: {
                             where: { isPrimary: true },
-                            take: 1
-                        }
+              take: 1,
                     },
-                    take: 10
+          },
+          take: 10,
                 });
                 return { data: products };
             },
@@ -259,13 +256,13 @@ export const getFeaturedProducts = async (req: Request, res: Response): Promise<
 
         res.json({
             status: 'success',
-            data: result
+      data: result,
         });
     } catch (error) {
         console.error('Error in getFeaturedProducts:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to fetch featured products'
+      message: 'Failed to fetch featured products',
         });
     }
 };
@@ -273,11 +270,11 @@ export const getFeaturedProducts = async (req: Request, res: Response): Promise<
 // Search products
 export const searchProducts = async (req: Request, res: Response): Promise<void> => {
     try {
-        const { q } = req.query;                                                    //search?q=sarbagila
+    const { q } = req.query; //search?q=sarbagila
         if (!q) {
             res.status(400).json({
                 status: 'error',
-                message: 'Search query is required'
+        message: 'Search query is required',
             });
             return;
         }
@@ -291,18 +288,18 @@ export const searchProducts = async (req: Request, res: Response): Promise<void>
                     where: {
                         OR: [
                             { name: { contains: String(q), mode: 'insensitive' } },
-                            { description: { contains: String(q), mode: 'insensitive' } }
+              { description: { contains: String(q), mode: 'insensitive' } },
                         ],
-                        isActive: true
+            isActive: true,
                     },
                     include: {
                         category: true,
                         images: {
                             where: { isPrimary: true },
-                            take: 1
-                        }
+              take: 1,
                     },
-                    take: 20
+          },
+          take: 20,
                 });
                 return { data: products };
             },
@@ -313,9 +310,9 @@ export const searchProducts = async (req: Request, res: Response): Promise<void>
     } catch (error) {
         console.error('Error in searchProducts:', error);
         res.status(500).json({
-            status: "Error",
-            message: "Failed to search products"
-        })
+      status: 'Error',
+      message: 'Failed to search products',
+    });
     }
 };
 
@@ -326,13 +323,13 @@ export const getProductById = async (
     next: NextFunction
 ): Promise<void> => {
     try {
-        const { id } = req.params;                                  //product/123
+    const { id } = req.params; //product/123
 
         // Validate ObjectId
-        if (!isValidObjectId(id)) {
+        if (!id) {
             res.status(400).json({
                 status: 'error',
-                message: 'Invalid product ID format'
+        message: 'Invalid product ID format',
             });
             return;
         }
@@ -346,14 +343,14 @@ export const getProductById = async (
                     include: {
                         category: true,
                         images: true,
-                        variants: true
-                    }
+            variants: true,
+          },
                 });
 
                 if (!product) {
                     res.status(404).json({
                         status: 'error',
-                        message: 'Product not found'
+            message: 'Product not found',
                     });
                     return;
                 }
@@ -371,7 +368,7 @@ export const getProductById = async (
 // Get product by slug
 export const getProductBySlug = async (req: Request, res: Response) => {
     try {
-        const { slug } = req.params;                                        //product/slug/sarbagila
+    const { slug } = req.params; //product/slug/sarbagila
         const result = await cacheWrapper(
             `products:slug:${slug}`,
             async () => {
@@ -380,8 +377,8 @@ export const getProductBySlug = async (req: Request, res: Response) => {
                     include: {
                         category: true,
                         images: true,
-                        variants: true
-                    }
+            variants: true,
+          },
                 });
 
                 if (!product) throw createError(404, 'Product not found');
@@ -395,19 +392,22 @@ export const getProductBySlug = async (req: Request, res: Response) => {
         console.error('Error in getProductBySlug:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to fetch product'
+      message: 'Failed to fetch product',
         });
     }
 };
 
 // Create product
-export const createProduct = async (req: Request<{}, {}, IProductCreate>, res: Response): Promise<void> => {
+export const createProduct = async (
+  req: Request<{}, {}, IProductCreate>,
+  res: Response
+): Promise<void> => {
     try {
         // Validate categoryId format first
-        if (!isValidObjectId(req.body.categoryId)) {
+        if (!req.body.categoryId) {
             res.status(400).json({
                 status: 'error',
-                message: 'Invalid category ID format'
+        message: 'Invalid category ID format',
             });
             return;
         }
@@ -415,21 +415,21 @@ export const createProduct = async (req: Request<{}, {}, IProductCreate>, res: R
         const product = await prisma.product.create({
             data: req.body,
             include: {
-                category: true
-            }
+        category: true,
+      },
         });
 
         // Invalidate relevant caches
         await Promise.all([
             deleteCachePattern(`${CACHE_KEYS.PRODUCTS_LIST}:*`),
             deleteCachePattern(`products:admin:list:*`),
-            deleteCachePattern(CACHE_KEYS.FEATURED_PRODUCTS)
+      deleteCachePattern(CACHE_KEYS.FEATURED_PRODUCTS),
         ]);
 
         res.status(201).json({
             status: 'success',
             message: 'Product created successfully',
-            data: { product }
+      data: { product },
         });
     } catch (error) {
         console.error('Error in createProduct:', error);
@@ -437,14 +437,14 @@ export const createProduct = async (req: Request<{}, {}, IProductCreate>, res: R
             if (error.code === 'P2002') {
                 res.status(400).json({
                     status: 'error',
-                    message: 'A product with this slug or SKU already exists'
+          message: 'A product with this slug or SKU already exists',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to create product'
+      message: 'Failed to create product',
         });
     }
 };
@@ -460,8 +460,8 @@ export const updateProduct = async (
             where: { id },
             data: req.body,
             include: {
-                category: true
-            }
+        category: true,
+      },
         });
 
         // Invalidate relevant caches
@@ -470,13 +470,13 @@ export const updateProduct = async (
             deleteCachePattern(`products:admin:list:*`),
             deleteCache(CACHE_KEYS.PRODUCT_DETAILS(id)),
             deleteCache(`products:slug:${product.slug}`),
-            product.isFeatured && deleteCachePattern(CACHE_KEYS.FEATURED_PRODUCTS)
+      product.isFeatured && deleteCachePattern(CACHE_KEYS.FEATURED_PRODUCTS),
         ]);
 
         res.json({
             status: 'success',
             message: 'Product updated successfully',
-            data: { product }
+      data: { product },
         });
     } catch (error) {
         console.error('Error in updateProduct:', error);
@@ -484,21 +484,21 @@ export const updateProduct = async (
             if (error.code === 'P2002') {
                 res.status(400).json({
                     status: 'error',
-                    message: 'A product with this slug or SKU already exists'
+          message: 'A product with this slug or SKU already exists',
                 });
                 return;
             }
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Product not found'
+          message: 'Product not found',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to update product'
+      message: 'Failed to update product',
         });
     }
 };
@@ -507,8 +507,17 @@ export const updateProduct = async (
 export const deleteProduct = async (req: Request, res: Response): Promise<void> => {
     try {
         const { id } = req.params;
+    
+    if (!id) {
+      res.status(400).json({
+        status: 'error',
+        message: 'Product ID is required',
+      });
+      return;
+    }
+
         await prisma.product.delete({
-            where: { id }
+      where: { id },
         });
 
         // Invalidate relevant caches
@@ -516,12 +525,12 @@ export const deleteProduct = async (req: Request, res: Response): Promise<void> 
             deleteCachePattern(`${CACHE_KEYS.PRODUCTS_LIST}:*`),
             deleteCachePattern(`products:admin:list:*`),
             deleteCache(CACHE_KEYS.PRODUCT_DETAILS(id)),
-            deleteCachePattern(CACHE_KEYS.FEATURED_PRODUCTS)
+      deleteCachePattern(CACHE_KEYS.FEATURED_PRODUCTS),
         ]);
 
         res.json({
             status: 'success',
-            message: 'Product deleted successfully'
+      message: 'Product deleted successfully',
         });
     } catch (error) {
         console.error('Error in deleteProduct:', error);
@@ -529,14 +538,14 @@ export const deleteProduct = async (req: Request, res: Response): Promise<void> 
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Product not found'
+          message: 'Product not found',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to delete product'
+      message: 'Failed to delete product',
         });
     }
 };
@@ -548,7 +557,7 @@ export const getProductImageUploadUrls = async (req: Request, res: Response): Pr
         if (!Array.isArray(fileTypes)) {
             res.status(400).json({
                 status: 'error',
-                message: 'fileTypes must be an array'
+        message: 'fileTypes must be an array',
             });
             return;
         }
@@ -562,13 +571,13 @@ export const getProductImageUploadUrls = async (req: Request, res: Response): Pr
         res.json({
             status: 'success',
             message: 'Upload URLs generated successfully',
-            data: { uploadUrls }
+      data: { uploadUrls },
         });
     } catch (error) {
         console.error('Error in getProductImageUploadUrls:', error);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to generate upload URLs'
+      message: 'Failed to generate upload URLs',
         });
     }
 };
@@ -585,7 +594,7 @@ export const uploadProductImages = async (
         if (!Array.isArray(images)) {
             res.status(400).json({
                 status: 'error',
-                message: 'images must be an array'
+        message: 'images must be an array',
             });
             return;
         }
@@ -598,20 +607,20 @@ export const uploadProductImages = async (
                         data: images.map((image) => ({
                             url: image.url,
                             alt: image.alt,
-                            isPrimary: image.isPrimary || false
-                        }))
-                    }
-                }
+              isPrimary: image.isPrimary || false,
+            })),
+          },
+        },
             },
             include: {
-                images: true
-            }
+        images: true,
+      },
         });
 
         res.json({
             status: 'success',
             message: 'Product images uploaded successfully',
-            data: { product }
+      data: { product },
         });
     } catch (error) {
         console.error('Error in uploadProductImages:', error);
@@ -619,14 +628,14 @@ export const uploadProductImages = async (
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Product not found'
+          message: 'Product not found',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to upload product images'
+      message: 'Failed to upload product images',
         });
     }
 };
@@ -638,13 +647,13 @@ export const deleteProductImage = async (req: Request, res: Response): Promise<v
 
         // Get the image URL before deleting
         const image = await prisma.productImage.findUnique({
-            where: { id: imageId }
+      where: { id: imageId },
         });
 
         if (!image) {
             res.status(404).json({
                 status: 'error',
-                message: 'Image not found'
+        message: 'Image not found',
             });
             return;
         }
@@ -654,17 +663,17 @@ export const deleteProductImage = async (req: Request, res: Response): Promise<v
 
         // Delete from database
         await prisma.productImage.delete({
-            where: { id: imageId }
+      where: { id: imageId },
         });
 
         await Promise.all([
             deleteCache(CACHE_KEYS.PRODUCT_DETAILS(image.productId)),
-            deleteCachePattern(`products:slug:*`)
+      deleteCachePattern(`products:slug:*`),
         ]);
 
         res.json({
             status: 'success',
-            message: 'Product image deleted successfully'
+      message: 'Product image deleted successfully',
         });
     } catch (error) {
         console.error('Error in deleteProductImage:', error);
@@ -672,14 +681,14 @@ export const deleteProductImage = async (req: Request, res: Response): Promise<v
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Image not found'
+          message: 'Image not found',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to delete product image'
+      message: 'Failed to delete product image',
         });
     }
 };
@@ -694,13 +703,13 @@ export const createProductVariant = async (
 
         // Check if product exists
         const product = await prisma.product.findUnique({
-            where: { id }
+      where: { id },
         });
 
         if (!product) {
             res.status(404).json({
                 status: 'error',
-                message: 'Product not found'
+        message: 'Product not found',
             });
             return;
         }
@@ -708,8 +717,8 @@ export const createProductVariant = async (
         const variant = await prisma.productVariant.create({
             data: {
                 ...req.body,
-                productId: id
-            }
+        productId: id,
+      },
         });
 
         // Invalidate product cache
@@ -718,7 +727,7 @@ export const createProductVariant = async (
         res.status(201).json({
             status: 'success',
             message: 'Product variant created successfully',
-            data: { variant }
+      data: { variant },
         });
     } catch (error) {
         console.error('Error in createProductVariant:', error);
@@ -726,14 +735,14 @@ export const createProductVariant = async (
             if (error.code === 'P2002') {
                 res.status(400).json({
                     status: 'error',
-                    message: 'A variant with this SKU already exists'
+          message: 'A variant with this SKU already exists',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to create product variant'
+      message: 'Failed to create product variant',
         });
     }
 };
@@ -749,22 +758,22 @@ export const createProductVariants = async (
 
         // Check if product exists
         const product = await prisma.product.findUnique({
-            where: { id }
+      where: { id },
         });
 
         if (!product) {
             res.status(404).json({
                 status: 'error',
-                message: 'Product not found'
+        message: 'Product not found',
             });
             return;
         }
 
         const createdVariants = await prisma.productVariant.createMany({
-            data: variants.map(variant => ({
+      data: variants.map((variant) => ({
                 ...variant,
-                productId: id
-            }))
+        productId: id,
+      })),
         });
 
         // Invalidate product cache
@@ -773,7 +782,7 @@ export const createProductVariants = async (
         res.status(201).json({
             status: 'success',
             message: 'Product variants created successfully',
-            data: { count: createdVariants.count }
+      data: { count: createdVariants.count },
         });
     } catch (error) {
         console.error('Error in createProductVariants:', error);
@@ -781,14 +790,14 @@ export const createProductVariants = async (
             if (error.code === 'P2002') {
                 res.status(400).json({
                     status: 'error',
-                    message: 'One or more variants have duplicate SKUs'
+          message: 'One or more variants have duplicate SKUs',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to create product variants'
+      message: 'Failed to create product variants',
         });
     }
 };
@@ -804,9 +813,9 @@ export const updateProductVariant = async (
         const variant = await prisma.productVariant.update({
             where: {
                 id: variantId,
-                productId: id
+        productId: id,
             },
-            data: req.body
+      data: req.body,
         });
 
         // Invalidate product cache
@@ -815,7 +824,7 @@ export const updateProductVariant = async (
         res.json({
             status: 'success',
             message: 'Product variant updated successfully',
-            data: { variant }
+      data: { variant },
         });
     } catch (error) {
         console.error('Error in updateProductVariant:', error);
@@ -823,21 +832,21 @@ export const updateProductVariant = async (
             if (error.code === 'P2002') {
                 res.status(400).json({
                     status: 'error',
-                    message: 'A variant with this SKU already exists'
+          message: 'A variant with this SKU already exists',
                 });
                 return;
             }
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Variant not found'
+          message: 'Variant not found',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to update product variant'
+      message: 'Failed to update product variant',
         });
     }
 };
@@ -853,8 +862,8 @@ export const deleteProductVariant = async (
         await prisma.productVariant.delete({
             where: {
                 id: variantId,
-                productId: id
-            }
+        productId: id,
+      },
         });
 
         // Invalidate product cache
@@ -862,7 +871,7 @@ export const deleteProductVariant = async (
 
         res.json({
             status: 'success',
-            message: 'Product variant deleted successfully'
+      message: 'Product variant deleted successfully',
         });
     } catch (error) {
         console.error('Error in deleteProductVariant:', error);
@@ -870,14 +879,14 @@ export const deleteProductVariant = async (
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Variant not found'
+          message: 'Variant not found',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to delete product variant'
+      message: 'Failed to delete product variant',
         });
     }
 };
@@ -888,18 +897,18 @@ export const getProductReviews = async (
     res: Response
 ): Promise<void> => {
     try {
-        const { id } = req.params;                                          //products/123/reviews
+    const { id } = req.params; //products/123/reviews
         const {
             page = 1,
             limit = 10,
             sortBy = 'createdAt',
             sortOrder = 'desc',
-            approved = true
+      approved = true,
         } = req.query;
 
         const where: Prisma.ReviewWhereInput = {
             productId: id,
-            isApproved: typeof approved === 'string' ? approved === 'true' : approved
+      isApproved: typeof approved === 'string' ? approved === 'true' : approved,
         };
 
         const reviews = await prisma.review.findMany({
@@ -910,15 +919,15 @@ export const getProductReviews = async (
                         id: true,
                         firstName: true,
                         lastName: true,
-                        avatar: true
-                    }
-                }
+            avatar: true,
+          },
+        },
             },
             skip: (Number(page) - 1) * Number(limit),
             take: Number(limit),
             orderBy: {
-                [String(sortBy)]: sortOrder
-            }
+        [String(sortBy)]: sortOrder,
+      },
         });
 
         const total = await prisma.review.count({ where });
@@ -927,24 +936,24 @@ export const getProductReviews = async (
             by: ['rating'],
             where: {
                 productId: id,
-                isApproved: true
+        isApproved: true,
             },
             _count: {
-                _all: true
+        _all: true,
             },
             orderBy: {
-                rating: 'asc'
-            }
+        rating: 'asc',
+      },
         });
 
         const avgRating = await prisma.review.aggregate({
             where: {
                 productId: id,
-                isApproved: true
+        isApproved: true,
             },
             _avg: {
-                rating: true
-            }
+        rating: true,
+      },
         });
 
         res.json({
@@ -958,10 +967,10 @@ export const getProductReviews = async (
                     totalPages: Math.ceil(total / Number(limit)),
                     stats: {
                         averageRating: avgRating._avg.rating || 0,
-                        ratingDistribution: ratingStats
-                    }
-                }
-            }
+            ratingDistribution: ratingStats,
+          },
+        },
+      },
         });
     } catch (error) {
         console.error('Error in getProductReviews:', error);
@@ -969,14 +978,14 @@ export const getProductReviews = async (
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Product not found'
+          message: 'Product not found',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to fetch product reviews'
+      message: 'Failed to fetch product reviews',
         });
     }
 };
@@ -988,22 +997,22 @@ export const createProductReview = async (
 ): Promise<void> => {
     try {
         const { id } = req.params;
-        const userId = req.user?.id as string;
+    if (!req.user?.id) {
+      throw new UnauthorizedError('User not authenticated');
+    }
+    const userId = req.user.id;
 
         // Check if user has already reviewed this product
         const existingReview = await prisma.review.findFirst({
             where: {
-                AND: [
-                    { userId },
-                    { productId: id }
-                ]
-            }
+        AND: [{ userId }, { productId: id }],
+      },
         });
 
         if (existingReview) {
             res.status(400).json({
                 status: 'error',
-                message: 'You have already reviewed this product'
+        message: 'You have already reviewed this product',
             });
             return;
         }
@@ -1013,9 +1022,9 @@ export const createProductReview = async (
             where: {
                 productId: id,
                 order: {
-                    userId
-                }
-            }
+          userId,
+        },
+      },
         });
 
         const review = await prisma.review.create({
@@ -1023,7 +1032,7 @@ export const createProductReview = async (
                 ...req.body,
                 productId: id,
                 userId,
-                isVerified: !!hasVerifiedPurchase
+        isVerified: !!hasVerifiedPurchase,
             },
             include: {
                 user: {
@@ -1031,16 +1040,16 @@ export const createProductReview = async (
                         id: true,
                         firstName: true,
                         lastName: true,
-                        avatar: true
-                    }
-                }
-            }
+            avatar: true,
+          },
+        },
+      },
         });
 
         res.status(201).json({
             status: 'success',
             message: 'Review created successfully',
-            data: { review }
+      data: { review },
         });
     } catch (error) {
         console.error('Error in createProductReview:', error);
@@ -1048,21 +1057,21 @@ export const createProductReview = async (
             if (error.code === 'P2002') {
                 res.status(400).json({
                     status: 'error',
-                    message: 'You have already reviewed this product'
+          message: 'You have already reviewed this product',
                 });
                 return;
             }
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Product not found'
+          message: 'Product not found',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to create review'
+      message: 'Failed to create review',
         });
     }
 };
@@ -1079,11 +1088,11 @@ export const updateProductReview = async (
         const review = await prisma.review.update({
             where: {
                 id: reviewId,
-                userId
+        userId,
             },
             data: {
                 ...req.body,
-                updatedAt: new Date()
+        updatedAt: new Date(),
             },
             include: {
                 user: {
@@ -1091,16 +1100,16 @@ export const updateProductReview = async (
                         id: true,
                         firstName: true,
                         lastName: true,
-                        avatar: true
-                    }
-                }
-            }
+            avatar: true,
+          },
+        },
+      },
         });
 
         res.json({
             status: 'success',
             message: 'Review updated successfully',
-            data: { review }
+      data: { review },
         });
     } catch (error) {
         console.error('Error in updateProductReview:', error);
@@ -1108,14 +1117,14 @@ export const updateProductReview = async (
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Review not found or unauthorized'
+          message: 'Review not found or unauthorized',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to update review'
+      message: 'Failed to update review',
         });
     }
 };
@@ -1129,13 +1138,13 @@ export const deleteProductReview = async (req: Request, res: Response): Promise<
         await prisma.review.delete({
             where: {
                 id: reviewId,
-                userId
-            }
+        userId,
+      },
         });
 
         res.json({
             status: 'success',
-            message: 'Review deleted successfully'
+      message: 'Review deleted successfully',
         });
     } catch (error) {
         console.error('Error in deleteProductReview:', error);
@@ -1143,14 +1152,14 @@ export const deleteProductReview = async (req: Request, res: Response): Promise<
             if (error.code === 'P2025') {
                 res.status(404).json({
                     status: 'error',
-                    message: 'Review not found or unauthorized'
+          message: 'Review not found or unauthorized',
                 });
                 return;
             }
         }
         res.status(500).json({
             status: 'error',
-            message: 'Failed to delete review'
+      message: 'Failed to delete review',
         });
     }
 };

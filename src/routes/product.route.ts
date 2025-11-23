@@ -1,36 +1,36 @@
 import { Router } from 'express';
 import {
-    listProducts,
-    listProductsAdmin,
-    getFeaturedProducts,
-    searchProducts,
-    getProductById,
-    getProductBySlug,
-    createProduct,
-    updateProduct,
-    deleteProduct,
-    uploadProductImages,
-    deleteProductImage,
-    getProductReviews,
-    createProductReview,
-    updateProductReview,
-    deleteProductReview,
-    getProductImageUploadUrls,
-    createProductVariant,
-    createProductVariants,
-    updateProductVariant,
-    deleteProductVariant
+  listProducts,
+  listProductsAdmin,
+  getFeaturedProducts,
+  searchProducts,
+  getProductById,
+  getProductBySlug,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  uploadProductImages,
+  deleteProductImage,
+  getProductReviews,
+  createProductReview,
+  updateProductReview,
+  deleteProductReview,
+  getProductImageUploadUrls,
+  createProductVariant,
+  createProductVariants,
+  updateProductVariant,
+  deleteProductVariant,
 } from '../controllers/product.controller';
 import { validateRequest } from '../middleware/validate';
 import { authenticate, authorize } from '../middleware/auth';
 import {
-    createProductSchema,
-    updateProductSchema,
-    createReviewSchema,
-    updateReviewSchema,
-    createVariantSchema,
-    updateVariantSchema,
-    createVariantBulkSchema
+  createProductSchema,
+  updateProductSchema,
+  createReviewSchema,
+  updateReviewSchema,
+  createVariantSchema,
+  updateVariantSchema,
+  createVariantBulkSchema,
 } from '../validators/product.validator';
 import { Role } from '@prisma/client';
 
@@ -58,9 +58,24 @@ router.post('/:id/images', authorize(Role.ADMIN), uploadProductImages);
 router.delete('/:id/images/:imageId', authorize(Role.ADMIN), deleteProductImage);
 
 // Variant routes (admin only)
-router.post('/:id/variants', authorize(Role.ADMIN), validateRequest(createVariantSchema), createProductVariant);
-router.post('/:id/variants/bulk', authorize(Role.ADMIN), validateRequest(createVariantBulkSchema), createProductVariants);
-router.put('/:id/variants/:variantId', authorize(Role.ADMIN), validateRequest(updateVariantSchema), updateProductVariant);
+router.post(
+  '/:id/variants',
+  authorize(Role.ADMIN),
+  validateRequest(createVariantSchema),
+  createProductVariant
+);
+router.post(
+  '/:id/variants/bulk',
+  authorize(Role.ADMIN),
+  validateRequest(createVariantBulkSchema),
+  createProductVariants
+);
+router.put(
+  '/:id/variants/:variantId',
+  authorize(Role.ADMIN),
+  validateRequest(updateVariantSchema),
+  updateProductVariant
+);
 router.delete('/:id/variants/:variantId', authorize(Role.ADMIN), deleteProductVariant);
 
 // Super Admin only routes
