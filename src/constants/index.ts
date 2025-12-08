@@ -48,10 +48,10 @@ export const RATE_LIMIT_WINDOW = {
 // Rate limiting max requests
 export const RATE_LIMIT_MAX = {
   API: 100,
-  AUTH: 5,
-  PASSWORD_RESET: 3,
-  REGISTRATION: 3,
-  EMAIL_VERIFICATION: 3,
+  AUTH: 10,
+  PASSWORD_RESET: 10,
+  REGISTRATION: 10,
+  EMAIL_VERIFICATION: 10,
 } as const;
 
 // Pagination defaults
