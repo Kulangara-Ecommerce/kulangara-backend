@@ -10,6 +10,7 @@ import adminRouter from './admin.route';
 import couponRouter from './coupon.route';
 import paymentRouter from './payment.route';
 import stockRouter from './stock.route';
+import contactRouter from './contact.route';
 
 const router = Router();
 
@@ -24,5 +25,6 @@ router.use('/orders', orderRouter);
 router.use('/admin', adminRouter);
 router.use('/payments', paymentRouter);
 router.use('/stock', stockRouter);
+router.use('/contact', contactRouter);
 
 export default router;

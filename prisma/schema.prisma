@@ -37,6 +37,7 @@ model User {
   cart          Cart?
   refreshTokens RefreshToken[]
   adminProfile  AdminProfile?
+  contactMessages ContactMessage[]
 
   @@index([role])
   @@index([isActive])
@@ -462,4 +463,19 @@ model Analytics {
   @@index([createdAt])
   @@index([type, createdAt])
   @@map("analytics")
+}
+
+model ContactMessage {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  phone     String?
+  message   String
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@map("contact_messages")
 }
