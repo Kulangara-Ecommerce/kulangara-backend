@@ -559,6 +559,13 @@ export const listAllOrders = async (
                       name: true,
                     },
                   },
+                  variant: {
+                    select: {
+                      size: true,
+                      fit: true,
+                      color: true,
+                    },
+                  },
                 },
               },
               shippingAddress: true,

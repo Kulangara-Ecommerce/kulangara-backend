@@ -43,8 +43,10 @@ export interface IOrderItem {
     }>;
   };
   variant?: {
-    name: string;
-    sku: string;
+    size: string;
+    fit?: string;
+    color?: string;
+    sku?: string;
   };
 }
 
