@@ -386,6 +386,11 @@ enum Gender {
   UNISEX
 }
 
+enum ProductFit {
+  OVERSIZED
+  NORMAL
+}
+
 model ProductImage {
   id        String  @id @default(uuid())
   productId String
@@ -408,7 +413,8 @@ model ProductVariant {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  size     String // S, M, L, XL, etc.
+  size     String // XS, S, M, L, XL, XXL
+  fit      ProductFit? // NORMAL or OVERSIZED
   color    String?
   price    Float? // Override product price if needed
   sku      String  @unique
