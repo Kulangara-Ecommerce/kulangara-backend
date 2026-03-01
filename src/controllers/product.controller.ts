@@ -769,35 +769,48 @@ export const createProductVariants = async (
             return;
         }
 
-        const createdVariants = await prisma.productVariant.createMany({
-      data: variants.map((variant) => ({
-                ...variant,
-        productId: id,
-      })),
-        });
+        // Upsert each variant so re-saving existing sizes updates rather than fails
+        const upsertedVariants = await Promise.all(
+            variants.map((variant) =>
+                prisma.productVariant.upsert({
+                    where: { sku: variant.sku },
+                    update: {
+                        stock: variant.stock,
+                        price: variant.price ?? null,
+                        color: variant.color ?? null,
+                        fit: variant.fit ?? null,
+                        isActive: variant.isActive ?? true,
+                    },
+                    create: {
+                        size: variant.size,
+                        fit: variant.fit ?? null,
+                        color: variant.color ?? null,
+                        price: variant.price ?? null,
+                        sku: variant.sku,
+                        stock: variant.stock,
+                        isActive: variant.isActive ?? true,
+                        productId: id,
+                    },
+                })
+            )
+        );
 
-        // Invalidate product cache
-        await deleteCache(CACHE_KEYS.PRODUCT_DETAILS(id));
+        // Invalidate product cache and admin list cache
+        await Promise.all([
+            deleteCache(CACHE_KEYS.PRODUCT_DETAILS(id)),
+            deleteCachePattern(`products:admin:list:*`),
+        ]);
 
         res.status(201).json({
             status: 'success',
-            message: 'Product variants created successfully',
-      data: { count: createdVariants.count },
+            message: 'Product variants saved successfully',
+            data: { count: upsertedVariants.length },
         });
     } catch (error) {
         console.error('Error in createProductVariants:', error);
-        if (error instanceof Prisma.PrismaClientKnownRequestError) {
-            if (error.code === 'P2002') {
-                res.status(400).json({
-                    status: 'error',
-          message: 'One or more variants have duplicate SKUs',
-                });
-                return;
-            }
-        }
         res.status(500).json({
             status: 'error',
-      message: 'Failed to create product variants',
+            message: 'Failed to save product variants',
         });
     }
 };
@@ -810,16 +823,23 @@ export const updateProductVariant = async (
     try {
         const { id, variantId } = req.params;
 
+        const { fit, ...restBody } = req.body;
         const variant = await prisma.productVariant.update({
             where: {
                 id: variantId,
-        productId: id,
+                productId: id,
             },
-      data: req.body,
+            data: {
+                ...restBody,
+                ...(fit !== undefined ? { fit: fit ?? null } : {}),
+            },
         });
 
-        // Invalidate product cache
-        await deleteCache(CACHE_KEYS.PRODUCT_DETAILS(id));
+        // Invalidate product cache and admin list cache
+        await Promise.all([
+            deleteCache(CACHE_KEYS.PRODUCT_DETAILS(id)),
+            deleteCachePattern(`products:admin:list:*`),
+        ]);
 
         res.json({
             status: 'success',
@@ -866,8 +886,11 @@ export const deleteProductVariant = async (
       },
         });
 
-        // Invalidate product cache
-        await deleteCache(CACHE_KEYS.PRODUCT_DETAILS(id));
+        // Invalidate product cache and admin list cache
+        await Promise.all([
+            deleteCache(CACHE_KEYS.PRODUCT_DETAILS(id)),
+            deleteCachePattern(`products:admin:list:*`),
+        ]);
 
         res.json({
             status: 'success',

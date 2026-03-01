@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 export const GenderEnum = z.enum(['MEN', 'WOMEN', 'UNISEX']);
+export const ProductFitEnum = z.enum(['OVERSIZED', 'NORMAL']);
+export const SizeEnum = z.enum(['XS', 'S', 'M', 'L', 'XL', 'XXL']);
 
 export const createProductSchema = z.object({
   body: z.object({
@@ -56,7 +58,8 @@ export const updateProductSchema = z.object({
 
 export const createVariantSchema = z.object({
   body: z.object({
-    size: z.string().min(1).max(20),
+    size: SizeEnum,
+    fit: ProductFitEnum.optional(),
     color: z.string().min(1).max(50).optional(),
     price: z.number().positive().optional(),
     sku: z.string().min(3).max(50),
@@ -67,7 +70,8 @@ export const createVariantSchema = z.object({
 
 export const updateVariantSchema = z.object({
   body: z.object({
-    size: z.string().min(1).max(20).optional(),
+    size: SizeEnum.optional(),
+    fit: ProductFitEnum.optional(),
     color: z.string().min(1).max(50).optional(),
     price: z.number().positive().optional(),
     sku: z.string().min(3).max(50).optional(),
@@ -81,7 +85,8 @@ export const createVariantBulkSchema = z.object({
     variants: z
       .array(
         z.object({
-          size: z.string().min(1).max(20),
+          size: SizeEnum,
+          fit: ProductFitEnum.optional(),
           color: z.string().min(1).max(50).optional(),
           price: z.number().positive().optional(),
           sku: z.string().min(3).max(50),

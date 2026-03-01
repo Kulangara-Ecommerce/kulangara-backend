@@ -1,4 +1,4 @@
-import { Gender } from '@prisma/client';
+import { Gender, ProductFit } from '@prisma/client';
 
 export interface IProduct {
   id: string;
@@ -67,6 +67,7 @@ export interface IProductVariant {
 
 export interface IProductVariantCreate {
   size: string;
+  fit?: ProductFit;
   color?: string;
   price?: number;
   sku: string;
