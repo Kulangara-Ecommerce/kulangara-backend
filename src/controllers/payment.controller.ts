@@ -132,7 +132,9 @@ export const createRazorpayOrderFromCart = async (req: Request, res: Response): 
           });
           return;
         }
-        if (variant.price !== item.price) {
+        // Use variant price if set, otherwise fall back to product price
+        const effectiveVariantPrice = variant.price ?? variant.product.price;
+        if (Math.abs(effectiveVariantPrice - item.price) > 0.01) {
           res.status(400).json({
             status: 'error',
             message: `Price mismatch for variant: ${item.variantId}`,
@@ -150,7 +152,9 @@ export const createRazorpayOrderFromCart = async (req: Request, res: Response): 
           });
           return;
         }
-        if (product.price !== item.price) {
+        // Use discounted price if available, otherwise base price
+        const effectiveProductPrice = product.discountedPrice ?? product.price;
+        if (Math.abs(effectiveProductPrice - item.price) > 0.01) {
           res.status(400).json({
             status: 'error',
             message: `Price mismatch for product: ${item.productId}`,
@@ -224,6 +228,131 @@ export const createRazorpayOrderFromCart = async (req: Request, res: Response): 
   }
 };
 
+// ─── Module-level helpers ─────────────────────────────────────────────────────
+
+const generateOrderNumber = (): string => {
+  const timestamp = Date.now().toString().slice(-8);
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `KGR${timestamp}${random}`;
+};
+
+const generateTrackingNumber = (): string => {
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let result = 'KGR';
+  const randomBytes = require('crypto').randomBytes(10);
+  for (let i = 0; i < 10; i++) {
+    result += chars[randomBytes[i] % chars.length];
+  }
+  return result;
+};
+
+const getEstimatedDeliveryDate = (workingDays = 5): Date => {
+  const date = new Date();
+  let addedDays = 0;
+  while (addedDays < workingDays) {
+    date.setDate(date.getDate() + 1);
+    const day = date.getDay();
+    if (day !== 0 && day !== 6) addedDays++;
+  }
+  return date;
+};
+
+/**
+ * Idempotently creates a DB order from Redis temp cart data.
+ * Safe to call from both the client-side verify endpoint and the Razorpay webhook.
+ */
+async function fulfillOrderFromTempData(
+  tempOrderData: ITemporaryOrderData,
+  userId: string,
+  razorpayPaymentId: string
+): Promise<{ id: string }> {
+  // Idempotency: skip if an order for this payment already exists
+  const existing = await prisma.order.findFirst({ where: { paymentId: razorpayPaymentId } });
+  if (existing) return existing;
+
+  let discountAmount = tempOrderData.cartData.discount;
+  let appliedCouponId: string | null = null;
+
+  if (tempOrderData.cartData.couponCode) {
+    const coupon = await prisma.coupon.findFirst({
+      where: {
+        code: tempOrderData.cartData.couponCode,
+        isActive: true,
+        validFrom: { lte: new Date() },
+        validUntil: { gte: new Date() },
+      },
+    });
+    if (coupon) appliedCouponId = coupon.id;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const stockItems: StockItem[] = tempOrderData.cartData.items.map((item) => ({
+      productId: item.productId,
+      variantId: item.variantId,
+      quantity: item.quantity,
+    }));
+
+    const stockReservation = await reserveStock(stockItems, tx);
+    if (!stockReservation.success) {
+      throw new Error(stockReservation.message || 'Failed to reserve stock');
+    }
+
+    const reservedItems = stockReservation.reservedItems!;
+
+    const order = await tx.order.create({
+      data: {
+        orderNumber: generateOrderNumber(),
+        userId,
+        status: OrderStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        paymentMethod: 'RAZORPAY',
+        paymentId: razorpayPaymentId,
+        shippingAddressId: tempOrderData.cartData.shippingAddressId,
+        subtotal: tempOrderData.cartData.subtotal,
+        discountAmount,
+        totalAmount: tempOrderData.cartData.total,
+        couponId: appliedCouponId,
+        trackingNumber: generateTrackingNumber(),
+        estimatedDelivery: getEstimatedDeliveryDate(),
+      },
+    });
+
+    for (const item of reservedItems) {
+      await tx.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: item.productId,
+          variantId: item.variantId,
+          quantity: item.quantity,
+          price: item.price,
+        },
+      });
+    }
+
+    await tx.orderStatusHistory.create({
+      data: {
+        orderId: order.id,
+        status: OrderStatus.CONFIRMED,
+        note: 'Order confirmed after successful payment',
+      },
+    });
+
+    await tx.cartItem.deleteMany({ where: { cart: { userId } } });
+    await tx.cart.updateMany({ where: { userId }, data: { subtotal: 0, total: 0 } });
+
+    if (appliedCouponId) {
+      await tx.coupon.update({
+        where: { id: appliedCouponId },
+        data: { usageCount: { increment: 1 } },
+      });
+    }
+
+    return order;
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 export const verifyPayment = async (req: Request, res: Response): Promise<void> => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
@@ -287,7 +416,6 @@ export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): 
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
-      cartData,
     }: IVerifyPaymentWithCartRequest = req.body;
 
     const userId = req.user!.id;
@@ -299,20 +427,15 @@ export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): 
       .digest('hex');
 
     if (expectedSignature !== razorpay_signature) {
-      res.status(400).json({
-        status: 'error',
-        message: 'Invalid payment signature',
-      });
+      res.status(400).json({ status: 'error', message: 'Invalid payment signature' });
       return;
     }
 
     const payment = await razorpay.payments.fetch(razorpay_payment_id);
 
-    if (payment.status !== 'captured') {
-      res.status(400).json({
-        status: 'error',
-        message: 'Payment not captured',
-      });
+    // Accept both 'captured' (auto-capture) and 'authorized' (manual capture / some UPI flows)
+    if (payment.status !== 'captured' && payment.status !== 'authorized') {
+      res.status(400).json({ status: 'error', message: 'Payment not captured' });
       return;
     }
 
@@ -328,151 +451,13 @@ export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): 
     const tempOrderData: ITemporaryOrderData = JSON.parse(tempOrderDataString);
 
     if (tempOrderData.userId !== userId) {
-      res.status(400).json({
-        status: 'error',
-        message: 'User mismatch',
-      });
+      res.status(400).json({ status: 'error', message: 'User mismatch' });
       return;
     }
 
-    const generateOrderNumber = (): string => {
-      const timestamp = Date.now().toString().slice(-8);
-      const random = Math.floor(Math.random() * 1000)
-        .toString()
-        .padStart(3, '0');
-      return `KGR${timestamp}${random}`;
-    };
+    const result = await fulfillOrderFromTempData(tempOrderData, userId, razorpay_payment_id);
 
-    const generateTrackingNumber = (): string => {
-      const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-      let result = 'KGR';
-      const randomBytes = require('crypto').randomBytes(10);
-      for (let i = 0; i < 10; i++) {
-        result += chars[randomBytes[i] % chars.length];
-      }
-      return result;
-    };
-
-    const getEstimatedDeliveryDate = (workingDays: number = 5): Date => {
-      const date = new Date();
-      let addedDays = 0;
-
-      while (addedDays < workingDays) {
-        date.setDate(date.getDate() + 1);
-        const day = date.getDay();
-        if (day !== 0 && day !== 6) {
-          addedDays++;
-        }
-      }
-      return date;
-    };
-
-    let discountAmount = tempOrderData.cartData.discount;
-    let appliedCouponId = null;
-
-    if (cartData.couponCode && tempOrderData.cartData.couponCode) {
-      const coupon = await prisma.coupon.findFirst({
-        where: {
-          code: cartData.couponCode,
-          isActive: true,
-          validFrom: { lte: new Date() },
-          validUntil: { gte: new Date() },
-        },
-      });
-
-      if (!coupon) {
-        res.status(400).json({
-          status: 'error',
-          message: 'Invalid or expired coupon',
-        });
-        return;
-      }
-
-      appliedCouponId = coupon.id;
-    }
-
-    const result = await prisma.$transaction(async (tx) => {
-      const stockItems: StockItem[] = cartData.items.map((item) => ({
-        productId: item.productId,
-        variantId: item.variantId,
-        quantity: item.quantity,
-      }));
-
-      const stockReservation = await reserveStock(stockItems, tx);
-
-      if (!stockReservation.success) {
-        throw new Error(stockReservation.message || 'Failed to reserve stock');
-      }
-
-      const reservedItems = stockReservation.reservedItems!;
-
-      const order = await tx.order.create({
-        data: {
-          orderNumber: generateOrderNumber(),
-          userId: userId,
-          status: OrderStatus.CONFIRMED,
-          paymentStatus: PaymentStatus.PAID,
-          paymentMethod: cartData.paymentMethod,
-          paymentId: razorpay_payment_id,
-          shippingAddressId: cartData.shippingAddressId,
-          subtotal: tempOrderData.cartData.subtotal,
-          discountAmount: discountAmount,
-          totalAmount: tempOrderData.cartData.total,
-          couponId: appliedCouponId,
-          trackingNumber: generateTrackingNumber(),
-          estimatedDelivery: getEstimatedDeliveryDate(),
-        },
-      });
-
-      // Create order items using the reserved items with correct prices
-      for (const item of reservedItems) {
-        await tx.orderItem.create({
-          data: {
-            orderId: order.id,
-            productId: item.productId,
-            variantId: item.variantId,
-            quantity: item.quantity,
-            price: item.price,
-          },
-        });
-      }
-
-      await tx.orderStatusHistory.create({
-        data: {
-          orderId: order.id,
-          status: OrderStatus.CONFIRMED,
-          note: 'Order confirmed after successful payment',
-        },
-      });
-
-      await tx.cartItem.deleteMany({
-        where: {
-          cart: {
-            userId: userId,
-          },
-        },
-      });
-
-      await tx.cart.updateMany({
-        where: { userId: userId },
-        data: {
-          subtotal: 0,
-          total: 0,
-        },
-      });
-
-      if (appliedCouponId) {
-        await tx.coupon.update({
-          where: { id: appliedCouponId },
-          data: {
-            usageCount: { increment: 1 },
-          },
-        });
-      }
-
-      return order;
-    });
-
+    // Clean up Redis key now that the order is safely in the DB
     await redis.del(`temp_order:${razorpay_order_id}`);
 
     res.json({
@@ -490,13 +475,9 @@ export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): 
       'Error in verifyPaymentAndCreateOrder'
     );
 
-    // Handle stock-related errors with specific messages
     const errorMessage = error instanceof Error ? error.message : '';
     if (errorMessage && errorMessage.includes('Stock reservation failed')) {
-      res.status(400).json({
-        status: 'error',
-        message: errorMessage,
-      });
+      res.status(400).json({ status: 'error', message: errorMessage });
       return;
     }
 
@@ -593,22 +574,57 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
 
 async function handlePaymentCaptured(payment: any) {
   const orderId = payment.notes?.orderId;
-  if (!orderId) return;
 
-  await prisma.order.update({
-    where: { id: orderId },
-    data: {
-      paymentStatus: PaymentStatus.PAID,
-      paymentId: payment.id,
-      status: 'CONFIRMED',
-      statusHistory: {
-        create: {
-          status: 'CONFIRMED',
-          note: 'Payment captured successfully',
+  // Legacy flow: order already exists in DB, just update its payment status
+  if (orderId) {
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        paymentStatus: PaymentStatus.PAID,
+        paymentId: payment.id,
+        status: 'CONFIRMED',
+        statusHistory: {
+          create: {
+            status: 'CONFIRMED',
+            note: 'Payment captured successfully',
+          },
         },
       },
-    },
-  });
+    });
+    return;
+  }
+
+  // Cart-based flow: the DB order is created during payment verification.
+  // This webhook fires as a fallback when the client-side verify call fails
+  // (e.g. network error, server timeout). The Redis key is temp_order:<razorpay_order_id>.
+  if (payment.notes?.type === 'cart_payment' && payment.order_id) {
+    const redisKey = `temp_order:${payment.order_id}`;
+    const tempDataString = await redis.get(redisKey);
+
+    if (!tempDataString) {
+      // Key already deleted — order was created successfully by the client verify call
+      logger.info(
+        { razorpayOrderId: payment.order_id },
+        'Webhook: temp order data not found in Redis — order already created by client'
+      );
+      return;
+    }
+
+    const tempOrderData: ITemporaryOrderData = JSON.parse(tempDataString);
+    try {
+      await fulfillOrderFromTempData(tempOrderData, tempOrderData.userId, payment.id);
+      await redis.del(redisKey);
+      logger.info(
+        { razorpayOrderId: payment.order_id },
+        'Webhook: order created successfully from cart data'
+      );
+    } catch (err) {
+      logger.error(
+        { err, razorpayOrderId: payment.order_id },
+        'Webhook: failed to create order from cart data'
+      );
+    }
+  }
 }
 
 async function handlePaymentFailed(payment: any) {
