@@ -191,6 +191,9 @@ export const listProducts = async (
                                 where: { isPrimary: true },
                 take: 1,
                         },
+                            variants: {
+                                select: { fit: true },
+                            },
             },
             skip: (normalizedQuery.page - 1) * normalizedQuery.limit, //(3-1) * 10
                         take: normalizedQuery.limit,
@@ -246,6 +249,9 @@ export const getFeaturedProducts = async (_req: Request, res: Response): Promise
                             where: { isPrimary: true },
               take: 1,
                     },
+                        variants: {
+                            select: { fit: true },
+                        },
           },
           take: 10,
                 });

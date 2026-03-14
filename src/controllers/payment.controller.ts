@@ -318,6 +318,19 @@ async function fulfillOrderFromTempData(
     });
 
     for (const item of reservedItems) {
+      let size: string | undefined;
+      let fit: string | undefined;
+      if (item.variantId) {
+        const variant = await tx.productVariant.findUnique({
+          where: { id: item.variantId },
+          select: { size: true, fit: true },
+        });
+        if (variant) {
+          size = variant.size;
+          fit = variant.fit ?? undefined;
+        }
+      }
+
       await tx.orderItem.create({
         data: {
           orderId: order.id,
@@ -325,6 +338,8 @@ async function fulfillOrderFromTempData(
           variantId: item.variantId,
           quantity: item.quantity,
           price: item.price,
+          size,
+          fit,
         },
       });
     }

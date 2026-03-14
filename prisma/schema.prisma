@@ -445,6 +445,10 @@ model OrderItem {
   quantity Int
   price    Float // Price at time of order
 
+  // Denormalized from variant at order time (persists even if variant is deleted)
+  size String?
+  fit  String?
+
   createdAt DateTime @default(now())
 
   @@index([orderId])

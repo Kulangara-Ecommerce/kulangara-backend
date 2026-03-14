@@ -265,16 +265,31 @@ export const createOrder = async (
         return;
       }
 
-      // Calculate totals using reserved items with correct prices
+      // Calculate totals and build order items with denormalized size/fit from variant
       for (const reservedItem of stockReservation.reservedItems!) {
         const itemSubtotal = reservedItem.price * reservedItem.quantity;
         subtotal += itemSubtotal;
+
+        let size: string | undefined;
+        let fit: string | undefined;
+        if (reservedItem.variantId) {
+          const variant = await prisma.productVariant.findUnique({
+            where: { id: reservedItem.variantId },
+            select: { size: true, fit: true },
+          });
+          if (variant) {
+            size = variant.size;
+            fit = variant.fit ?? undefined;
+          }
+        }
 
         orderItems.push({
           productId: reservedItem.productId,
           variantId: reservedItem.variantId,
           quantity: reservedItem.quantity,
           price: reservedItem.price,
+          size,
+          fit,
         });
       }
 
