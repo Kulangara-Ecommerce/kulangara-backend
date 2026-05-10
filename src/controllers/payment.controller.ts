@@ -5,6 +5,7 @@ import { PaymentStatus, OrderStatus } from '@prisma/client';
 import { razorpay } from '../config/razorpay';
 import redis from '../config/redis';
 import { reserveStock, StockItem } from '../services/stock.service';
+import { deleteCachePattern } from '../services/cache.service';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
 import { getHeaderString } from '../utils/typeGuards';
@@ -285,7 +286,7 @@ async function fulfillOrderFromTempData(
     if (coupon) appliedCouponId = coupon.id;
   }
 
-  return prisma.$transaction(async (tx) => {
+  const order = await prisma.$transaction(async (tx) => {
     const stockItems: StockItem[] = tempOrderData.cartData.items.map((item) => ({
       productId: item.productId,
       variantId: item.variantId,
@@ -364,6 +365,13 @@ async function fulfillOrderFromTempData(
 
     return order;
   });
+
+  await Promise.all([
+    deleteCachePattern(`orders:user:${userId}:*`),
+    deleteCachePattern('orders:all:*'),
+  ]);
+
+  return order;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -454,7 +462,8 @@ export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): 
       return;
     }
 
-    const tempOrderDataString = await redis.get(`temp_order:${razorpay_order_id}`);
+    const redisKey = `temp_order:${razorpay_order_id}`;
+    const tempOrderDataString = await redis.get(redisKey);
     if (!tempOrderDataString) {
       res.status(400).json({
         status: 'error',
@@ -473,7 +482,7 @@ export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): 
     const result = await fulfillOrderFromTempData(tempOrderData, userId, razorpay_payment_id);
 
     // Clean up Redis key now that the order is safely in the DB
-    await redis.del(`temp_order:${razorpay_order_id}`);
+    await redis.del(redisKey);
 
     res.json({
       status: 'success',
