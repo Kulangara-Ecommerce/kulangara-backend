@@ -1,19 +1,19 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../config/db';
-import { PaymentStatus, OrderStatus } from '@prisma/client';
+import { PaymentStatus } from '@prisma/client';
 import { razorpay } from '../config/razorpay';
 import redis from '../config/redis';
-import { reserveStock, StockItem } from '../services/stock.service';
-import { deleteCachePattern } from '../services/cache.service';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
 import { getHeaderString } from '../utils/typeGuards';
+import { ICreateRazorpayOrderRequest, IVerifyPaymentWithCartRequest } from '../types/payment.types';
 import {
-  ICreateRazorpayOrderRequest,
-  IVerifyPaymentWithCartRequest,
-  ITemporaryOrderData,
-} from '../types/payment.types';
+  createPendingOrderFromCart,
+  confirmOrderPaymentByRazorpayOrderId,
+  failOrderPaymentByRazorpayOrderId,
+  findOrderByRazorpayOrderId,
+} from '../services/orderPayment.service';
 
 export const createRazorpayOrder = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -52,6 +52,13 @@ export const createRazorpayOrder = async (req: Request, res: Response): Promise<
       notes: {
         orderId: order.id,
       },
+    });
+
+    // Persist the link so the webhook and reconciliation job can find this
+    // order purely from the Razorpay order id, same as the cart-checkout flow.
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { razorpayOrderId: razorpayOrder.id },
     });
 
     res.json({
@@ -187,17 +194,42 @@ export const createRazorpayOrderFromCart = async (req: Request, res: Response): 
       },
     });
 
-    const tempOrderData: ITemporaryOrderData = {
-      razorpayOrderId: razorpayOrder.id,
-      cartData,
-      userId,
-      userEmail: userEmail || user.email,
-      userPhone: userPhone || user.phone || '',
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
-    };
-
-    await redis.setex(`temp_order:${razorpayOrder.id}`, 3600, JSON.stringify(tempOrderData));
+    // Create the DB order now, PENDING, before the customer has paid. This is
+    // what lets the webhook and the reconciliation job recover this order
+    // even if the client never comes back after payment (closed tab, network
+    // drop, etc.) — there is always a row to update instead of relying on a
+    // short-lived cache entry that may already be gone by the time anything
+    // tries to read it.
+    try {
+      await createPendingOrderFromCart({
+        razorpayOrderId: razorpayOrder.id,
+        userId,
+        cartData,
+      });
+    } catch (creationError) {
+      const message = creationError instanceof Error ? creationError.message : '';
+      logger.error(
+        { err: creationError, razorpayOrderId: razorpayOrder.id },
+        'Failed to create pending order for cart checkout'
+      );
+      if (
+        message.includes('Insufficient stock') ||
+        message.includes('not found') ||
+        message.includes('Stock reservation failed')
+      ) {
+        res.status(400).json({
+          status: 'error',
+          message:
+            'Some items in your cart are no longer available or out of stock. Please review your cart and try again.',
+        });
+        return;
+      }
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to create payment order',
+      });
+      return;
+    }
 
     res.json({
       status: 'success',
@@ -229,153 +261,6 @@ export const createRazorpayOrderFromCart = async (req: Request, res: Response): 
   }
 };
 
-// ─── Module-level helpers ─────────────────────────────────────────────────────
-
-const generateOrderNumber = (): string => {
-  const timestamp = Date.now().toString().slice(-8);
-  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `KGR${timestamp}${random}`;
-};
-
-const generateTrackingNumber = (): string => {
-  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  let result = 'KGR';
-  const randomBytes = require('crypto').randomBytes(10);
-  for (let i = 0; i < 10; i++) {
-    result += chars[randomBytes[i] % chars.length];
-  }
-  return result;
-};
-
-const getEstimatedDeliveryDate = (workingDays = 5): Date => {
-  const date = new Date();
-  let addedDays = 0;
-  while (addedDays < workingDays) {
-    date.setDate(date.getDate() + 1);
-    const day = date.getDay();
-    if (day !== 0 && day !== 6) addedDays++;
-  }
-  return date;
-};
-
-/**
- * Idempotently creates a DB order from Redis temp cart data.
- * Safe to call from both the client-side verify endpoint and the Razorpay webhook.
- */
-async function fulfillOrderFromTempData(
-  tempOrderData: ITemporaryOrderData,
-  userId: string,
-  razorpayPaymentId: string
-): Promise<{ id: string }> {
-  // Idempotency: skip if an order for this payment already exists
-  const existing = await prisma.order.findFirst({ where: { paymentId: razorpayPaymentId } });
-  if (existing) return existing;
-
-  let discountAmount = tempOrderData.cartData.discount;
-  let appliedCouponId: string | null = null;
-
-  if (tempOrderData.cartData.couponCode) {
-    const coupon = await prisma.coupon.findFirst({
-      where: {
-        code: tempOrderData.cartData.couponCode,
-        isActive: true,
-        validFrom: { lte: new Date() },
-        validUntil: { gte: new Date() },
-      },
-    });
-    if (coupon) appliedCouponId = coupon.id;
-  }
-
-  const order = await prisma.$transaction(async (tx) => {
-    const stockItems: StockItem[] = tempOrderData.cartData.items.map((item) => ({
-      productId: item.productId,
-      variantId: item.variantId,
-      quantity: item.quantity,
-    }));
-
-    const stockReservation = await reserveStock(stockItems, tx);
-    if (!stockReservation.success) {
-      throw new Error(stockReservation.message || 'Failed to reserve stock');
-    }
-
-    const reservedItems = stockReservation.reservedItems!;
-
-    const order = await tx.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        userId,
-        status: OrderStatus.CONFIRMED,
-        paymentStatus: PaymentStatus.PAID,
-        paymentMethod: 'RAZORPAY',
-        paymentId: razorpayPaymentId,
-        shippingAddressId: tempOrderData.cartData.shippingAddressId,
-        subtotal: tempOrderData.cartData.subtotal,
-        discountAmount,
-        totalAmount: tempOrderData.cartData.total,
-        couponId: appliedCouponId,
-        trackingNumber: generateTrackingNumber(),
-        estimatedDelivery: getEstimatedDeliveryDate(),
-      },
-    });
-
-    for (const item of reservedItems) {
-      let size: string | undefined;
-      let fit: string | undefined;
-      if (item.variantId) {
-        const variant = await tx.productVariant.findUnique({
-          where: { id: item.variantId },
-          select: { size: true, fit: true },
-        });
-        if (variant) {
-          size = variant.size;
-          fit = variant.fit ?? undefined;
-        }
-      }
-
-      await tx.orderItem.create({
-        data: {
-          orderId: order.id,
-          productId: item.productId,
-          variantId: item.variantId,
-          quantity: item.quantity,
-          price: item.price,
-          size,
-          fit,
-        },
-      });
-    }
-
-    await tx.orderStatusHistory.create({
-      data: {
-        orderId: order.id,
-        status: OrderStatus.CONFIRMED,
-        note: 'Order confirmed after successful payment',
-      },
-    });
-
-    await tx.cartItem.deleteMany({ where: { cart: { userId } } });
-    await tx.cart.updateMany({ where: { userId }, data: { subtotal: 0, total: 0 } });
-
-    if (appliedCouponId) {
-      await tx.coupon.update({
-        where: { id: appliedCouponId },
-        data: { usageCount: { increment: 1 } },
-      });
-    }
-
-    return order;
-  });
-
-  await Promise.all([
-    deleteCachePattern(`orders:user:${userId}:*`),
-    deleteCachePattern('orders:all:*'),
-  ]);
-
-  return order;
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-
 export const verifyPayment = async (req: Request, res: Response): Promise<void> => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
@@ -394,31 +279,18 @@ export const verifyPayment = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const payment = await razorpay.payments.fetch(razorpay_payment_id);
-    const orderId = payment.notes?.orderId;
+    const updated = await confirmOrderPaymentByRazorpayOrderId(
+      razorpay_order_id,
+      razorpay_payment_id
+    );
 
-    if (!orderId) {
-      res.status(400).json({
+    if (!updated) {
+      res.status(404).json({
         status: 'error',
-        message: 'Order ID not found in payment',
+        message: 'Order not found for this payment',
       });
       return;
     }
-
-    await prisma.order.update({
-      where: { id: orderId },
-      data: {
-        paymentStatus: PaymentStatus.PAID,
-        paymentId: razorpay_payment_id,
-        status: 'CONFIRMED',
-        statusHistory: {
-          create: {
-            status: 'CONFIRMED',
-            note: 'Payment received and verified',
-          },
-        },
-      },
-    });
 
     res.json({
       status: 'success',
@@ -462,27 +334,27 @@ export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): 
       return;
     }
 
-    const redisKey = `temp_order:${razorpay_order_id}`;
-    const tempOrderDataString = await redis.get(redisKey);
-    if (!tempOrderDataString) {
-      res.status(400).json({
+    // The order was already created (PENDING) when the Razorpay order was
+    // created, before checkout even opened — see createRazorpayOrderFromCart.
+    const order = await findOrderByRazorpayOrderId(razorpay_order_id);
+    if (!order) {
+      res.status(404).json({
         status: 'error',
-        message: 'Order session expired or not found',
+        message:
+          'Order not found. If your payment was captured, it will be confirmed automatically shortly.',
       });
       return;
     }
 
-    const tempOrderData: ITemporaryOrderData = JSON.parse(tempOrderDataString);
-
-    if (tempOrderData.userId !== userId) {
-      res.status(400).json({ status: 'error', message: 'User mismatch' });
+    if (order.userId !== userId) {
+      res.status(403).json({ status: 'error', message: 'User mismatch' });
       return;
     }
 
-    const result = await fulfillOrderFromTempData(tempOrderData, userId, razorpay_payment_id);
-
-    // Clean up Redis key now that the order is safely in the DB
-    await redis.del(redisKey);
+    const result = await confirmOrderPaymentByRazorpayOrderId(
+      razorpay_order_id,
+      razorpay_payment_id
+    );
 
     res.json({
       status: 'success',
@@ -490,7 +362,7 @@ export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): 
       data: {
         verified: true,
         paymentId: razorpay_payment_id,
-        orderId: result.id,
+        orderId: result!.id,
       },
     });
   } catch (error) {
@@ -498,24 +370,6 @@ export const verifyPaymentAndCreateOrder = async (req: Request, res: Response): 
       { err: error, endpoint: 'verifyPaymentAndCreateOrder' },
       'Error in verifyPaymentAndCreateOrder'
     );
-
-    const errorMessage = error instanceof Error ? error.message : '';
-    if (errorMessage && errorMessage.includes('Stock reservation failed')) {
-      res.status(400).json({ status: 'error', message: errorMessage });
-      return;
-    }
-
-    if (
-      errorMessage &&
-      (errorMessage.includes('Insufficient stock') || errorMessage.includes('not found'))
-    ) {
-      res.status(400).json({
-        status: 'error',
-        message:
-          'Some items in your cart are no longer available or out of stock. Please review your cart and try again.',
-      });
-      return;
-    }
 
     res.status(500).json({
       status: 'error',
@@ -596,87 +450,49 @@ export const handleWebhook = async (req: Request, res: Response): Promise<void> 
   }
 };
 
+// Both the legacy (pre-created order) and cart-checkout flows now persist
+// razorpayOrderId on the order as soon as the Razorpay order is created, so
+// the webhook can find and confirm/fail the order without needing anything
+// from `payment.notes` or Redis.
 async function handlePaymentCaptured(payment: any) {
-  const orderId = payment.notes?.orderId;
+  const updated = await confirmOrderPaymentByRazorpayOrderId(payment.order_id, payment.id);
 
-  // Legacy flow: order already exists in DB, just update its payment status
-  if (orderId) {
-    await prisma.order.update({
-      where: { id: orderId },
-      data: {
-        paymentStatus: PaymentStatus.PAID,
-        paymentId: payment.id,
-        status: 'CONFIRMED',
-        statusHistory: {
-          create: {
-            status: 'CONFIRMED',
-            note: 'Payment captured successfully',
-          },
-        },
-      },
-    });
-    return;
-  }
-
-  // Cart-based flow: the DB order is created during payment verification.
-  // This webhook fires as a fallback when the client-side verify call fails
-  // (e.g. network error, server timeout). The Redis key is temp_order:<razorpay_order_id>.
-  if (payment.notes?.type === 'cart_payment' && payment.order_id) {
-    const redisKey = `temp_order:${payment.order_id}`;
-    const tempDataString = await redis.get(redisKey);
-
-    if (!tempDataString) {
-      // Key already deleted — order was created successfully by the client verify call
-      logger.info(
-        { razorpayOrderId: payment.order_id },
-        'Webhook: temp order data not found in Redis — order already created by client'
-      );
-      return;
-    }
-
-    const tempOrderData: ITemporaryOrderData = JSON.parse(tempDataString);
-    try {
-      await fulfillOrderFromTempData(tempOrderData, tempOrderData.userId, payment.id);
-      await redis.del(redisKey);
-      logger.info(
-        { razorpayOrderId: payment.order_id },
-        'Webhook: order created successfully from cart data'
-      );
-    } catch (err) {
-      logger.error(
-        { err, razorpayOrderId: payment.order_id },
-        'Webhook: failed to create order from cart data'
-      );
-    }
+  if (!updated) {
+    // Either the order hasn't been created yet (shouldn't happen — the order
+    // row is written synchronously before checkout ever opens) or this
+    // razorpayOrderId doesn't belong to us. Log loudly so it's not silently lost.
+    logger.error(
+      { razorpayOrderId: payment.order_id, paymentId: payment.id },
+      'Webhook: payment.captured for a Razorpay order with no matching DB order'
+    );
   }
 }
 
 async function handlePaymentFailed(payment: any) {
-  const orderId = payment.notes?.orderId;
-  if (!orderId) return;
+  const updated = await failOrderPaymentByRazorpayOrderId(payment.order_id, 'Payment failed');
 
-  await prisma.order.update({
-    where: { id: orderId },
-    data: {
-      paymentStatus: PaymentStatus.FAILED,
-      paymentId: payment.id,
-      status: 'CANCELLED',
-      statusHistory: {
-        create: {
-          status: 'CANCELLED',
-          note: 'Payment failed',
-        },
-      },
-    },
-  });
+  if (!updated) {
+    logger.warn(
+      { razorpayOrderId: payment.order_id, paymentId: payment.id },
+      'Webhook: payment.failed for a Razorpay order with no matching DB order'
+    );
+  }
 }
 
 async function handleRefundProcessed(refund: any) {
   const orderId = refund.notes?.orderId;
-  if (!orderId) return;
+
+  const order = orderId
+    ? await prisma.order.findUnique({ where: { id: orderId } })
+    : await prisma.order.findFirst({ where: { paymentId: refund.payment_id } });
+
+  if (!order) {
+    logger.warn({ refundId: refund.id }, 'Webhook: refund.processed for an unknown order');
+    return;
+  }
 
   await prisma.order.update({
-    where: { id: orderId },
+    where: { id: order.id },
     data: {
       paymentStatus: PaymentStatus.REFUNDED,
       status: 'REFUNDED',
@@ -748,13 +564,5 @@ export const updatePaymentStatus = async (req: Request, res: Response): Promise<
       status: 'error',
       message: 'Failed to update payment status',
     });
-  }
-};
-
-export const cleanupExpiredTemporaryOrders = async (): Promise<void> => {
-  try {
-    logger.debug('Cleanup function called - Redis keys auto-expire after 1 hour');
-  } catch (error) {
-    logger.error({ err: error }, 'Error cleaning up expired temporary orders');
   }
 };

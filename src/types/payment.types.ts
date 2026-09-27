@@ -61,26 +61,3 @@ export interface IVerifyPaymentWithCartResponse {
     orderId: string; // Database order ID (created only after successful payment)
   };
 }
-
-export interface ITemporaryOrderData {
-  razorpayOrderId: string;
-  cartData: {
-    items: Array<{
-      productId: string;
-      variantId?: string;
-      quantity: number;
-      price: number;
-    }>;
-    subtotal: number;
-    tax: number;
-    discount: number;
-    total: number;
-    couponCode?: string;
-    shippingAddressId: string;
-  };
-  userId: string;
-  userEmail?: string;
-  userPhone?: string;
-  createdAt: Date;
-  expiresAt: Date;
-}

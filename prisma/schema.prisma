@@ -168,8 +168,9 @@ model Order {
   shippingAddress   Address @relation(fields: [shippingAddressId], references: [id])
 
   // Payment
-  paymentMethod String
-  paymentId     String?
+  paymentMethod   String
+  paymentId       String?
+  razorpayOrderId String? @unique
 
   // Delivery
   trackingNumber    String?

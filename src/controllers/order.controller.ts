@@ -3,12 +3,10 @@ import { prisma } from '../config/db';
 import { Prisma, OrderStatus, PaymentStatus, DiscountType } from '@prisma/client';
 import { cacheWrapper, deleteCachePattern, deleteCache } from '../services/cache.service';
 import { reserveStock, restoreStock, StockItem } from '../services/stock.service';
+import { updateOrderStatusById } from '../services/orderStatus.service';
+import { notifyOrderCreated } from '../services/googleSheets.service';
 // import { ObjectId } from 'bson';
-import {
-  IOrderCreate,
-  IOrderStatusUpdate,
-  IOrderFilters,
-} from '../types/order.types';
+import { IOrderCreate, IOrderStatusUpdate, IOrderFilters } from '../types/order.types';
 import { v4 as uuid } from 'uuid';
 
 // Cache keys
@@ -377,6 +375,16 @@ export const createOrder = async (
       return order;
     });
 
+    if (!order) {
+      // A response (validation error / stock failure) was already sent from
+      // inside the transaction callback above.
+      return;
+    }
+
+    notifyOrderCreated(order).catch((err) =>
+      console.error('Failed to sync new order to Google Sheets:', err)
+    );
+
     res.status(201).json({
       status: 'success',
       message: 'Order created successfully',
@@ -636,34 +644,13 @@ export const updateOrderStatus = async (
       return;
     }
 
-    const order = await prisma.order.update({
-      where: { id },
-      data: {
-        status,
-        trackingNumber,
-        estimatedDelivery,
-        statusHistory: {
-          create: {
-            status,
-            note,
-            updatedBy,
-          },
-        },
-      },
-      include: {
-        statusHistory: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
+    const order = await updateOrderStatusById(id, {
+      status,
+      note,
+      trackingNumber,
+      estimatedDelivery,
+      updatedBy,
     });
-
-    // Invalidate caches
-    await Promise.all([
-      deleteCache(CACHE_KEYS.ORDER_DETAILS(id)),
-      deleteCachePattern(`${CACHE_KEYS.USER_ORDERS(order.userId, '*')}`),
-      deleteCachePattern(`${CACHE_KEYS.ALL_ORDERS('*')}`),
-    ]);
 
     res.json({
       status: 'success',

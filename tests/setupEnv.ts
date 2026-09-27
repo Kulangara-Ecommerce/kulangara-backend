@@ -1,0 +1,13 @@
+process.env.NODE_ENV = 'test';
+process.env.PORT = process.env.PORT || '3000';
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://test:test@localhost:5432/test';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
+process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'test-jwt-refresh-secret';
+process.env.RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_dummy';
+process.env.RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || 'dummy_secret';
+process.env.RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || 'dummy_webhook_secret';
+process.env.RESEND_API_KEY = process.env.RESEND_API_KEY || 'dummy_resend_key';
+process.env.AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || 'dummy_access_key';
+process.env.AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || 'dummy_secret_key';
+process.env.AWS_REGION = process.env.AWS_REGION || 'us-east-1';
+process.env.AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME || 'dummy-bucket';

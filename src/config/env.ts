@@ -36,6 +36,19 @@ const envSchema = z.object({
 
   // Business
   BUSINESS_NAME: z.string().optional(),
+
+  // Google Sheets order sync (optional — sync is disabled if unset)
+  GOOGLE_SHEETS_CLIENT_EMAIL: z.string().optional(),
+  GOOGLE_SHEETS_PRIVATE_KEY: z.string().optional(),
+  GOOGLE_SHEETS_SPREADSHEET_ID: z.string().optional(),
+  GOOGLE_SHEETS_SHEET_NAME: z.string().optional(),
+
+  // Background jobs
+  ORDER_RECONCILIATION_THRESHOLD_MINUTES: z.string().regex(/^\d+$/).transform(Number).optional(),
+  DISABLE_BACKGROUND_JOBS: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
 });
 
 type Env = z.infer<typeof envSchema>;
