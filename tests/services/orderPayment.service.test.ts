@@ -5,6 +5,7 @@ jest.mock('../../src/config/db', () => ({
     order: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
+      findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),
@@ -40,12 +41,14 @@ import {
   createPendingOrderFromCart,
   confirmOrderPaymentByRazorpayOrderId,
   failOrderPaymentByRazorpayOrderId,
+  findReusablePendingOrder,
 } from '../../src/services/orderPayment.service';
 
 const mockPrisma = prisma as unknown as {
   order: {
     findUnique: jest.Mock;
     findFirst: jest.Mock;
+    findMany: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
     updateMany: jest.Mock;
@@ -63,7 +66,9 @@ const mockPrisma = prisma as unknown as {
 beforeEach(() => {
   // $transaction just runs the callback against the same mocked client,
   // which is enough for unit-testing the logic without a real DB.
-  mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(mockPrisma));
+  mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) =>
+    cb(mockPrisma)
+  );
 });
 
 describe('createPendingOrderFromCart', () => {
@@ -78,7 +83,9 @@ describe('createPendingOrderFromCart', () => {
   it('creates a PENDING/PENDING order and reserves stock before any payment happens', async () => {
     (reserveStock as jest.Mock).mockResolvedValue({
       success: true,
-      reservedItems: [{ productId: 'prod-1', variantId: 'var-1', quantity: 2, price: 100, productName: 'Tee' }],
+      reservedItems: [
+        { productId: 'prod-1', variantId: 'var-1', quantity: 2, price: 100, productName: 'Tee' },
+      ],
     });
     mockPrisma.productVariant.findUnique.mockResolvedValue({ size: 'M', fit: 'NORMAL' });
     mockPrisma.order.create.mockResolvedValue({ id: 'order-1', razorpayOrderId: 'rzp_order_1' });
@@ -145,8 +152,13 @@ describe('confirmOrderPaymentByRazorpayOrderId', () => {
 
     const result = await confirmOrderPaymentByRazorpayOrderId('rzp_order_1', 'pay_1');
 
-    expect(result).toMatchObject({ status: OrderStatus.CONFIRMED, paymentStatus: PaymentStatus.PAID });
-    expect(mockPrisma.cartItem.deleteMany).toHaveBeenCalledWith({ where: { cart: { userId: 'user-1' } } });
+    expect(result).toMatchObject({
+      status: OrderStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+    });
+    expect(mockPrisma.cartItem.deleteMany).toHaveBeenCalledWith({
+      where: { cart: { userId: 'user-1' } },
+    });
     expect(mockPrisma.coupon.update).toHaveBeenCalledWith({
       where: { id: 'coupon-1' },
       data: { usageCount: { increment: 1 } },
@@ -207,11 +219,34 @@ describe('failOrderPaymentByRazorpayOrderId', () => {
 
     const result = await failOrderPaymentByRazorpayOrderId('rzp_order_1', 'timed out');
 
-    expect(result).toMatchObject({ status: OrderStatus.CANCELLED, paymentStatus: PaymentStatus.FAILED });
+    expect(result).toMatchObject({
+      status: OrderStatus.CANCELLED,
+      paymentStatus: PaymentStatus.FAILED,
+    });
     expect(restoreStock).toHaveBeenCalledWith(
       [{ productId: 'prod-1', variantId: 'var-1', quantity: 2 }],
       expect.anything()
     );
+  });
+
+  it('keeps paymentStatus PENDING when the checkout was abandoned (no payment attempted)', async () => {
+    mockPrisma.order.findUnique.mockResolvedValue({
+      id: 'order-1',
+      status: OrderStatus.PENDING,
+      paymentStatus: PaymentStatus.PENDING,
+      items: [{ productId: 'prod-1', variantId: 'var-1', quantity: 1 }],
+    });
+    mockPrisma.order.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.order.findUniqueOrThrow.mockResolvedValue({ id: 'order-1' });
+
+    await failOrderPaymentByRazorpayOrderId('rzp_order_1', 'abandoned', { abandoned: true });
+
+    expect(mockPrisma.order.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: OrderStatus.CANCELLED, paymentStatus: PaymentStatus.PENDING },
+      })
+    );
+    expect(restoreStock).toHaveBeenCalled();
   });
 
   it('refuses to fail an order that has already been paid', async () => {
@@ -240,5 +275,48 @@ describe('failOrderPaymentByRazorpayOrderId', () => {
     await failOrderPaymentByRazorpayOrderId('rzp_order_1', 'already failed once');
 
     expect(restoreStock).not.toHaveBeenCalled();
+  });
+});
+
+describe('findReusablePendingOrder', () => {
+  const cart = {
+    items: [
+      { productId: 'p1', variantId: 'v1', quantity: 2, price: 599 },
+      { productId: 'p2', quantity: 1, price: 599 },
+    ],
+    subtotal: 1797,
+    discount: 0,
+    total: 1797,
+    shippingAddressId: 'addr-1',
+  };
+
+  it('returns a recent unpaid order with the same items regardless of item order', async () => {
+    mockPrisma.order.findMany.mockResolvedValue([
+      {
+        razorpayOrderId: 'order_dup',
+        totalAmount: 1797,
+        items: [
+          { productId: 'p2', variantId: null, quantity: 1 },
+          { productId: 'p1', variantId: 'v1', quantity: 2 },
+        ],
+      },
+    ]);
+
+    await expect(findReusablePendingOrder('user-1', cart)).resolves.toEqual({
+      razorpayOrderId: 'order_dup',
+      totalAmount: 1797,
+    });
+  });
+
+  it('does not reuse an order whose items differ', async () => {
+    mockPrisma.order.findMany.mockResolvedValue([
+      {
+        razorpayOrderId: 'order_other',
+        totalAmount: 1797,
+        items: [{ productId: 'p1', variantId: 'v1', quantity: 3 }],
+      },
+    ]);
+
+    await expect(findReusablePendingOrder('user-1', cart)).resolves.toBeNull();
   });
 });

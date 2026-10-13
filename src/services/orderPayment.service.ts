@@ -159,6 +159,51 @@ export async function createPendingOrderFromCart(input: {
   return order;
 }
 
+/** How long a PENDING checkout can be reused. Must stay below the reconciliation threshold (45 min). */
+export const REUSABLE_PENDING_ORDER_WINDOW_MINUTES = 30;
+
+/**
+ * Looks for an unpaid checkout the same user started moments ago with the exact
+ * same cart, address and total. A double-click or client retry would otherwise
+ * create a second Razorpay order + DB order and reserve the stock twice, so the
+ * caller reuses this one instead.
+ */
+export async function findReusablePendingOrder(
+  userId: string,
+  cartData: CartCheckoutData
+): Promise<{ razorpayOrderId: string; totalAmount: number } | null> {
+  const since = new Date(Date.now() - REUSABLE_PENDING_ORDER_WINDOW_MINUTES * 60 * 1000);
+
+  const candidates = await prisma.order.findMany({
+    where: {
+      userId,
+      status: OrderStatus.PENDING,
+      paymentStatus: PaymentStatus.PENDING,
+      paymentMethod: 'RAZORPAY',
+      razorpayOrderId: { not: null },
+      shippingAddressId: cartData.shippingAddressId,
+      totalAmount: cartData.total,
+      createdAt: { gte: since },
+    },
+    include: { items: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const signature = (
+    items: Array<{ productId: string; variantId?: string | null; quantity: number }>
+  ): string =>
+    items
+      .map((i) => `${i.productId}:${i.variantId ?? ''}:${i.quantity}`)
+      .sort()
+      .join('|');
+  const wanted = signature(cartData.items);
+
+  const match = candidates.find((o) => signature(o.items) === wanted);
+  return match && match.razorpayOrderId
+    ? { razorpayOrderId: match.razorpayOrderId, totalAmount: match.totalAmount }
+    : null;
+}
+
 export async function findOrderByRazorpayOrderId(razorpayOrderId: string): Promise<Order | null> {
   return prisma.order.findUnique({ where: { razorpayOrderId } });
 }
@@ -237,10 +282,15 @@ export async function confirmOrderPaymentByRazorpayOrderId(
 /**
  * Idempotently marks an order as failed/cancelled and releases the stock
  * that was reserved for it at creation time. Safe to call more than once.
+ *
+ * `abandoned` is for checkouts where the customer never attempted a payment:
+ * the order is CANCELLED but paymentStatus stays PENDING, so FAILED is kept
+ * for payments that were really attempted and went wrong.
  */
 export async function failOrderPaymentByRazorpayOrderId(
   razorpayOrderId: string,
-  reason: string
+  reason: string,
+  options: { abandoned?: boolean } = {}
 ): Promise<Order | null> {
   const order = await prisma.order.findUnique({
     where: { razorpayOrderId },
@@ -264,7 +314,7 @@ export async function failOrderPaymentByRazorpayOrderId(
       },
       data: {
         status: OrderStatus.CANCELLED,
-        paymentStatus: PaymentStatus.FAILED,
+        paymentStatus: options.abandoned ? PaymentStatus.PENDING : PaymentStatus.FAILED,
       },
     });
 

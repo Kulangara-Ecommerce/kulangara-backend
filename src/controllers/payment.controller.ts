@@ -13,6 +13,7 @@ import {
   confirmOrderPaymentByRazorpayOrderId,
   failOrderPaymentByRazorpayOrderId,
   findOrderByRazorpayOrderId,
+  findReusablePendingOrder,
 } from '../services/orderPayment.service';
 
 export const createRazorpayOrder = async (req: Request, res: Response): Promise<void> => {
@@ -181,62 +182,12 @@ export const createRazorpayOrderFromCart = async (req: Request, res: Response): 
       return;
     }
 
-    const receiptId = `CART_${Date.now()}_${userId.slice(-6)}`;
-
-    const razorpayOrder = await razorpay.orders.create({
-      amount: Math.round(cartData.total * 100),
-      currency: 'INR',
-      receipt: receiptId,
-      notes: {
-        userId: userId,
-        type: 'cart_payment',
-        itemCount: cartData.items.length.toString(),
-      },
-    });
-
-    // Create the DB order now, PENDING, before the customer has paid. This is
-    // what lets the webhook and the reconciliation job recover this order
-    // even if the client never comes back after payment (closed tab, network
-    // drop, etc.) — there is always a row to update instead of relying on a
-    // short-lived cache entry that may already be gone by the time anything
-    // tries to read it.
-    try {
-      await createPendingOrderFromCart({
-        razorpayOrderId: razorpayOrder.id,
-        userId,
-        cartData,
-      });
-    } catch (creationError) {
-      const message = creationError instanceof Error ? creationError.message : '';
-      logger.error(
-        { err: creationError, razorpayOrderId: razorpayOrder.id },
-        'Failed to create pending order for cart checkout'
-      );
-      if (
-        message.includes('Insufficient stock') ||
-        message.includes('not found') ||
-        message.includes('Stock reservation failed')
-      ) {
-        res.status(400).json({
-          status: 'error',
-          message:
-            'Some items in your cart are no longer available or out of stock. Please review your cart and try again.',
-        });
-        return;
-      }
-      res.status(500).json({
-        status: 'error',
-        message: 'Failed to create payment order',
-      });
-      return;
-    }
-
-    res.json({
+    const buildCheckoutResponse = (razorpayOrderId: string, amount: number) => ({
       status: 'success',
       data: {
-        orderId: razorpayOrder.id,
-        amount: razorpayOrder.amount,
-        currency: razorpayOrder.currency,
+        orderId: razorpayOrderId,
+        amount,
+        currency: 'INR',
         key: env.RAZORPAY_KEY_ID,
         name: env.BUSINESS_NAME || 'Kulangara',
         description: `Order for ${cartData.items.length} item(s)`,
@@ -249,6 +200,105 @@ export const createRazorpayOrderFromCart = async (req: Request, res: Response): 
         },
       },
     });
+
+    // A double-click or client retry sends this request twice within seconds.
+    // Serialize per user and reuse an identical unpaid checkout instead of
+    // creating (and reserving stock for) a second order.
+    const lockKey = `checkout:lock:${userId}`;
+    let lockAcquired = false;
+    try {
+      lockAcquired = (await redis.set(lockKey, '1', 'EX', 20, 'NX')) === 'OK';
+    } catch (lockError) {
+      logger.warn({ err: lockError }, 'Checkout lock unavailable, continuing without it');
+      lockAcquired = true;
+    }
+
+    try {
+      if (!lockAcquired) {
+        // The other in-flight request is creating this order; wait briefly for it.
+        for (let attempt = 0; attempt < 10; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          const inFlight = await findReusablePendingOrder(userId, cartData);
+          if (inFlight) {
+            res.json(
+              buildCheckoutResponse(
+                inFlight.razorpayOrderId,
+                Math.round(inFlight.totalAmount * 100)
+              )
+            );
+            return;
+          }
+        }
+      }
+
+      const reusable = await findReusablePendingOrder(userId, cartData);
+      if (reusable) {
+        logger.info(
+          { userId, razorpayOrderId: reusable.razorpayOrderId },
+          'Reusing existing pending checkout instead of creating a duplicate order'
+        );
+        res.json(
+          buildCheckoutResponse(reusable.razorpayOrderId, Math.round(reusable.totalAmount * 100))
+        );
+        return;
+      }
+
+      const receiptId = `CART_${Date.now()}_${userId.slice(-6)}`;
+
+      const razorpayOrder = await razorpay.orders.create({
+        amount: Math.round(cartData.total * 100),
+        currency: 'INR',
+        receipt: receiptId,
+        notes: {
+          userId: userId,
+          type: 'cart_payment',
+          itemCount: cartData.items.length.toString(),
+        },
+      });
+
+      // Create the DB order now, PENDING, before the customer has paid. This is
+      // what lets the webhook and the reconciliation job recover this order
+      // even if the client never comes back after payment (closed tab, network
+      // drop, etc.) — there is always a row to update instead of relying on a
+      // short-lived cache entry that may already be gone by the time anything
+      // tries to read it.
+      try {
+        await createPendingOrderFromCart({
+          razorpayOrderId: razorpayOrder.id,
+          userId,
+          cartData,
+        });
+      } catch (creationError) {
+        const message = creationError instanceof Error ? creationError.message : '';
+        logger.error(
+          { err: creationError, razorpayOrderId: razorpayOrder.id },
+          'Failed to create pending order for cart checkout'
+        );
+        if (
+          message.includes('Insufficient stock') ||
+          message.includes('not found') ||
+          message.includes('Stock reservation failed')
+        ) {
+          res.status(400).json({
+            status: 'error',
+            message:
+              'Some items in your cart are no longer available or out of stock. Please review your cart and try again.',
+          });
+          return;
+        }
+        res.status(500).json({
+          status: 'error',
+          message: 'Failed to create payment order',
+        });
+        return;
+      }
+
+      res.json(buildCheckoutResponse(razorpayOrder.id, razorpayOrder.amount as number));
+    } finally {
+      if (lockAcquired) {
+        await redis.del(lockKey).catch(() => undefined);
+      }
+    }
   } catch (error) {
     logger.error(
       { err: error, endpoint: 'createRazorpayOrderFromCart' },

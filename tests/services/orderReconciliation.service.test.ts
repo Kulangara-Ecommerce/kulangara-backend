@@ -26,7 +26,8 @@ import {
 import { reconcileStalePendingOrders } from '../../src/services/orderReconciliation.service';
 
 const mockFindMany = (prisma.order as unknown as { findMany: jest.Mock }).findMany;
-const mockFetchPayments = (razorpay.orders as unknown as { fetchPayments: jest.Mock }).fetchPayments;
+const mockFetchPayments = (razorpay.orders as unknown as { fetchPayments: jest.Mock })
+  .fetchPayments;
 
 const staleOrder = {
   id: 'order-1',
@@ -67,7 +68,7 @@ describe('reconcileStalePendingOrders', () => {
     expect(result).toEqual({ checked: 1, confirmed: 1, failed: 0, skipped: 0 });
   });
 
-  it('fails a stale order with no successful payment at Razorpay and releases its stock', async () => {
+  it('marks a stale order as abandoned (not a failed payment) when Razorpay saw no payment attempt', async () => {
     mockFindMany.mockResolvedValue([staleOrder]);
     mockFetchPayments.mockResolvedValue({ items: [] });
 
@@ -75,10 +76,24 @@ describe('reconcileStalePendingOrders', () => {
 
     expect(failOrderPaymentByRazorpayOrderId).toHaveBeenCalledWith(
       'rzp_order_1',
-      expect.stringContaining('No successful payment')
+      expect.stringContaining('abandoned'),
+      { abandoned: true }
     );
     expect(confirmOrderPaymentByRazorpayOrderId).not.toHaveBeenCalled();
     expect(result).toEqual({ checked: 1, confirmed: 0, failed: 1, skipped: 0 });
+  });
+
+  it('marks a stale order as a real payment failure when attempts exist but none succeeded', async () => {
+    mockFindMany.mockResolvedValue([staleOrder]);
+    mockFetchPayments.mockResolvedValue({ items: [{ id: 'pay_x', status: 'failed' }] });
+
+    await reconcileStalePendingOrders(45);
+
+    expect(failOrderPaymentByRazorpayOrderId).toHaveBeenCalledWith(
+      'rzp_order_1',
+      expect.stringContaining('No successful payment'),
+      { abandoned: false }
+    );
   });
 
   it('skips (and does not crash) when the Razorpay lookup itself throws, so it retries next run', async () => {

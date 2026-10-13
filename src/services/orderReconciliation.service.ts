@@ -52,7 +52,7 @@ export async function reconcileStalePendingOrders(
     }
 
     try {
-      const capturedPaymentId = await findCapturedPaymentId(order.razorpayOrderId);
+      const { capturedPaymentId, attempts } = await inspectPayments(order.razorpayOrderId);
 
       if (capturedPaymentId) {
         await confirmOrderPaymentByRazorpayOrderId(order.razorpayOrderId, capturedPaymentId);
@@ -62,9 +62,13 @@ export async function reconcileStalePendingOrders(
           'Reconciliation: self-healed a stale order that Razorpay shows as paid'
         );
       } else {
+        const abandoned = attempts === 0;
         await failOrderPaymentByRazorpayOrderId(
           order.razorpayOrderId,
-          `No successful payment found ${thresholdMinutes} minutes after order creation`
+          abandoned
+            ? `Checkout abandoned: no payment attempted within ${thresholdMinutes} minutes`
+            : `No successful payment found ${thresholdMinutes} minutes after order creation`,
+          { abandoned }
         );
         result.failed++;
         logger.info(
@@ -84,8 +88,10 @@ export async function reconcileStalePendingOrders(
   return result;
 }
 
-async function findCapturedPaymentId(razorpayOrderId: string): Promise<string | null> {
+async function inspectPayments(
+  razorpayOrderId: string
+): Promise<{ capturedPaymentId: string | null; attempts: number }> {
   const { items } = await razorpay.orders.fetchPayments(razorpayOrderId);
   const captured = items.find((p) => p.status === 'captured' || p.status === 'authorized');
-  return captured ? captured.id : null;
+  return { capturedPaymentId: captured ? captured.id : null, attempts: items.length };
 }
