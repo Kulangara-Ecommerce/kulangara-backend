@@ -4,6 +4,16 @@ import { cacheWrapper } from '../services/cache.service';
 import { IAnalyticsFilters, IDashboardStats, IOrderAnalytics } from '../types/analytics.types';
 import { OrderStatus } from '@prisma/client';
 
+// Orders that count toward revenue: confirmed and every later fulfilment stage.
+// Excludes PENDING (unpaid), CANCELLED, RETURNED and REFUNDED.
+const REVENUE_STATUSES: OrderStatus[] = [
+  OrderStatus.CONFIRMED,
+  OrderStatus.PROCESSING,
+  OrderStatus.SHIPPED,
+  OrderStatus.OUT_FOR_DELIVERY,
+  OrderStatus.DELIVERED,
+];
+
 // Cache keys
 const CACHE_KEYS = {
   ANALYTICS: (query: Record<string, unknown>): string => `analytics:${JSON.stringify(query)}`,
@@ -194,6 +204,7 @@ export const getDashboardStats = async (_req: Request, res: Response): Promise<v
                     totalOrders,
                     ordersToday,
                     orderStats,
+                    todayStats,
                     products,
                     outOfStockProducts,
           lowStockProducts,
@@ -233,19 +244,20 @@ export const getDashboardStats = async (_req: Request, res: Response): Promise<v
             },
                     }),
 
-                    // Order stats
+                    // Revenue stats (all time, confirmed+ orders only)
                     prisma.order.aggregate({
-                        _sum: {
-              totalAmount: true,
-                        },
-                        _avg: {
-              totalAmount: true,
-                        },
+                        _sum: { totalAmount: true },
+                        _avg: { totalAmount: true },
+                        where: { status: { in: REVENUE_STATUSES } },
+                    }),
+
+                    // Revenue stats (today, confirmed+ orders only)
+                    prisma.order.aggregate({
+                        _sum: { totalAmount: true },
                         where: {
-                            createdAt: {
-                gte: today,
-              },
-            },
+                            status: { in: REVENUE_STATUSES },
+                            createdAt: { gte: today },
+                        },
                     }),
 
                     // Total products
@@ -290,7 +302,7 @@ export const getDashboardStats = async (_req: Request, res: Response): Promise<v
                         totalRevenue: orderStats._sum.totalAmount || 0,
                         averageOrderValue: orderStats._avg.totalAmount || 0,
                         ordersToday,
-            revenueToday: orderStats._sum.totalAmount || 0,
+            revenueToday: todayStats._sum.totalAmount || 0,
                     },
                     products: {
                         total: products,
@@ -360,6 +372,7 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
 
                     prisma.order.aggregate({
                         where: {
+                            status: { in: REVENUE_STATUSES },
                             createdAt: {
                                 gte: startDateTime,
                 lte: endDateTime,
@@ -370,6 +383,7 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
 
                     prisma.order.aggregate({
                         where: {
+                            status: { in: REVENUE_STATUSES },
                             createdAt: {
                                 gte: startDateTime,
                 lte: endDateTime,
@@ -392,6 +406,7 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
                     prisma.order.groupBy({
                         by: ['createdAt'],
                         where: {
+                            status: { in: REVENUE_STATUSES },
                             createdAt: {
                                 gte: startDateTime,
                 lte: endDateTime,
@@ -405,6 +420,7 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
                         by: ['productId'],
                         where: {
                             order: {
+                                status: { in: REVENUE_STATUSES },
                                 createdAt: {
                                     gte: startDateTime,
                   lte: endDateTime,
@@ -426,6 +442,7 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
                     prisma.order.groupBy({
                         by: ['paymentMethod'],
                         where: {
+                            status: { in: REVENUE_STATUSES },
                             createdAt: {
                                 gte: startDateTime,
                 lte: endDateTime,
@@ -440,6 +457,7 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
                     prisma.order.groupBy({
                         by: ['userId'],
                         where: {
+                            status: { in: REVENUE_STATUSES },
                             createdAt: {
                                 gte: startDateTime,
                 lte: endDateTime,
@@ -481,6 +499,7 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
 
                     prisma.order.aggregate({
                         where: {
+                            status: { in: REVENUE_STATUSES },
                             createdAt: {
                                 gte: previousPeriodStart,
                 lt: previousPeriodEnd,
@@ -495,6 +514,7 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
                     prisma.order.groupBy({
                         by: ['shippingAddressId'],
                         where: {
+                            status: { in: REVENUE_STATUSES },
                             createdAt: {
                                 gte: startDateTime,
                 lte: endDateTime,
@@ -624,12 +644,15 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
           customerStats.reduce((acc, curr) => acc + (curr._sum.totalAmount || 0), 0) /
           totalCustomers;
 
+                const revenueOrders = statusDistribution
+                    .filter((s) => REVENUE_STATUSES.includes(s.status))
+                    .reduce((acc, s) => acc + s._count, 0);
                 const currentPeriodRevenue = totalRevenue._sum.totalAmount || 0;
                 const previousPeriodRevenue = previousPeriodStats._sum.totalAmount || 0;
         const revenueGrowth =
           ((currentPeriodRevenue - previousPeriodRevenue) / previousPeriodRevenue) * 100;
         const orderGrowth =
-          ((totalOrders - previousPeriodStats._count) / previousPeriodStats._count) * 100;
+          ((revenueOrders - previousPeriodStats._count) / previousPeriodStats._count) * 100;
 
                 const analytics: IOrderAnalytics = {
                     totalOrders,
