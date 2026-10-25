@@ -194,6 +194,7 @@ export const getDashboardStats = async (_req: Request, res: Response): Promise<v
                     usersByStatus,
                     totalOrders,
                     ordersToday,
+                    pendingOrders,
                     orderStats,
                     todayStats,
                     products,
@@ -223,16 +224,22 @@ export const getDashboardStats = async (_req: Request, res: Response): Promise<v
             _count: true,
                     }),
 
-                    // Total orders
-                    prisma.order.count(),
+                    // Total orders (successful only)
+                    prisma.order.count({
+                        where: { status: { in: REVENUE_STATUSES } },
+                    }),
 
-                    // Orders today
+                    // Orders today (successful only)
                     prisma.order.count({
                         where: {
-                            createdAt: {
-                gte: today,
-              },
-            },
+                            status: { in: REVENUE_STATUSES },
+                            createdAt: { gte: today },
+                        },
+                    }),
+
+                    // Checkouts still waiting for payment
+                    prisma.order.count({
+                        where: { status: OrderStatus.PENDING },
                     }),
 
                     // Revenue stats (all time, confirmed+ orders only)
@@ -290,6 +297,7 @@ export const getDashboardStats = async (_req: Request, res: Response): Promise<v
                     },
                     orders: {
                         total: totalOrders,
+                        pending: pendingOrders,
                         totalRevenue: orderStats._sum.totalAmount || 0,
                         averageOrderValue: orderStats._avg.totalAmount || 0,
                         ordersToday,
@@ -352,8 +360,10 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
                     locationStats,
           deliveryStats,
                 ] = await Promise.all([
+                    // Successful orders only, so the card agrees with revenue and the Orders page
                     prisma.order.count({
                         where: {
+                            status: { in: REVENUE_STATUSES },
                             createdAt: {
                                 gte: startDateTime,
                 lte: endDateTime,
@@ -635,15 +645,12 @@ export const getOrderAnalytics = async (req: Request, res: Response): Promise<vo
           customerStats.reduce((acc, curr) => acc + (curr._sum.totalAmount || 0), 0) /
           totalCustomers;
 
-                const revenueOrders = statusDistribution
-                    .filter((s) => REVENUE_STATUSES.includes(s.status))
-                    .reduce((acc, s) => acc + s._count, 0);
                 const currentPeriodRevenue = totalRevenue._sum.totalAmount || 0;
                 const previousPeriodRevenue = previousPeriodStats._sum.totalAmount || 0;
         const revenueGrowth =
           ((currentPeriodRevenue - previousPeriodRevenue) / previousPeriodRevenue) * 100;
         const orderGrowth =
-          ((revenueOrders - previousPeriodStats._count) / previousPeriodStats._count) * 100;
+          ((totalOrders - previousPeriodStats._count) / previousPeriodStats._count) * 100;
 
                 const analytics: IOrderAnalytics = {
                     totalOrders,

@@ -115,6 +115,7 @@ export interface IDashboardStats {
   };
   orders: {
     total: number;
+    pending: number;
     totalRevenue: number;
     averageOrderValue: number;
     ordersToday: number;
