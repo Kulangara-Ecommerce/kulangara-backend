@@ -3,16 +3,7 @@ import { prisma } from '../config/db';
 import { cacheWrapper } from '../services/cache.service';
 import { IAnalyticsFilters, IDashboardStats, IOrderAnalytics } from '../types/analytics.types';
 import { OrderStatus } from '@prisma/client';
-
-// Orders that count toward revenue: confirmed and every later fulfilment stage.
-// Excludes PENDING (unpaid), CANCELLED, RETURNED and REFUNDED.
-const REVENUE_STATUSES: OrderStatus[] = [
-  OrderStatus.CONFIRMED,
-  OrderStatus.PROCESSING,
-  OrderStatus.SHIPPED,
-  OrderStatus.OUT_FOR_DELIVERY,
-  OrderStatus.DELIVERED,
-];
+import { REVENUE_STATUSES } from '../constants';
 
 // Cache keys
 const CACHE_KEYS = {

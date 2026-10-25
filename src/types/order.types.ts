@@ -1,4 +1,5 @@
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus, PaymentStatus } from '@prisma/client';
+import { OrderGroup } from '../constants';
 
 // Request Interfaces
 export interface IOrderCreate {
@@ -23,6 +24,9 @@ export interface IOrderFilters {
   page?: number;
   limit?: number;
   status?: OrderStatus;
+  group?: OrderGroup;
+  paymentStatus?: PaymentStatus;
+  paymentMethod?: string;
   startDate?: string;
   endDate?: string;
   search?: string;

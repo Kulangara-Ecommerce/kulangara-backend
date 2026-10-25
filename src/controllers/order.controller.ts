@@ -8,6 +8,7 @@ import { notifyOrderCreated } from '../services/googleSheets.service';
 // import { ObjectId } from 'bson';
 import { IOrderCreate, IOrderStatusUpdate, IOrderFilters } from '../types/order.types';
 import { v4 as uuid } from 'uuid';
+import { ORDER_GROUPS, OrderGroup } from '../constants';
 
 // Cache keys
 const CACHE_KEYS = {
@@ -532,16 +533,61 @@ export const listAllOrders = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { page = 1, limit = 10, status, startDate, endDate, search } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      group,
+      paymentStatus,
+      paymentMethod,
+      startDate,
+      endDate,
+      search,
+    } = req.query;
 
     const normalizedQuery = {
       page: Number(page),
       limit: Number(limit),
       status: status ? String(status) : undefined,
+      group: group ? String(group) : undefined,
+      paymentStatus: paymentStatus ? String(paymentStatus) : undefined,
+      paymentMethod: paymentMethod ? String(paymentMethod) : undefined,
       startDate: startDate ? new Date(String(startDate)) : undefined,
       endDate: endDate ? new Date(String(endDate)) : undefined,
       search: search ? String(search) : undefined,
     };
+
+    // Reject unknown enum values up front; Prisma would otherwise throw and surface a 500
+    const invalidFilter = [
+      normalizedQuery.status &&
+        !Object.values(OrderStatus).includes(normalizedQuery.status as OrderStatus) &&
+        'status',
+      normalizedQuery.group && !Object.keys(ORDER_GROUPS).includes(normalizedQuery.group) && 'group',
+      normalizedQuery.paymentStatus &&
+        !Object.values(PaymentStatus).includes(normalizedQuery.paymentStatus as PaymentStatus) &&
+        'paymentStatus',
+    ].find(Boolean);
+
+    if (invalidFilter) {
+      res.status(400).json({
+        status: 'error',
+        message: `Invalid ${invalidFilter} filter`,
+      });
+      return;
+    }
+
+    // A group narrows the list to its statuses. An explicit status must fall inside the group,
+    // otherwise nothing matches (e.g. group=successful with status=CANCELLED returns no rows).
+    const groupStatuses = normalizedQuery.group
+      ? ORDER_GROUPS[normalizedQuery.group as OrderGroup]
+      : undefined;
+    let statusFilter: Prisma.OrderWhereInput['status'];
+    if (normalizedQuery.status) {
+      const requested = normalizedQuery.status as OrderStatus;
+      statusFilter = groupStatuses && !groupStatuses.includes(requested) ? { in: [] } : requested;
+    } else if (groupStatuses) {
+      statusFilter = { in: [...groupStatuses] };
+    }
 
     const cacheKey = CACHE_KEYS.ALL_ORDERS(normalizedQuery);
 
@@ -549,7 +595,11 @@ export const listAllOrders = async (
       cacheKey,
       async () => {
         const where: Prisma.OrderWhereInput = {
-          status: normalizedQuery.status as OrderStatus,
+          status: statusFilter,
+          paymentStatus: normalizedQuery.paymentStatus as PaymentStatus | undefined,
+          paymentMethod: normalizedQuery.paymentMethod
+            ? { equals: normalizedQuery.paymentMethod, mode: 'insensitive' }
+            : undefined,
           createdAt: {
             gte: normalizedQuery.startDate,
             lte: normalizedQuery.endDate,
