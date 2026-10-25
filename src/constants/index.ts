@@ -3,6 +3,8 @@
  * Centralized location for all magic numbers and configuration values
  */
 
+import { OrderStatus } from '@prisma/client';
+
 // Token expiration times (in seconds)
 export const TOKEN_EXPIRY = {
   ACCESS_TOKEN: 15 * 60, // 15 minutes
@@ -88,6 +90,30 @@ export const STOCK = {
 export const ORDER = {
   MAX_ITEMS_PER_ORDER: 100,
 } as const;
+
+// Orders that count as a real sale: confirmed and every later fulfilment stage.
+// Shared by analytics (revenue) and the admin orders list so both agree.
+export const REVENUE_STATUSES: OrderStatus[] = [
+  OrderStatus.CONFIRMED,
+  OrderStatus.PROCESSING,
+  OrderStatus.SHIPPED,
+  OrderStatus.OUT_FOR_DELIVERY,
+  OrderStatus.DELIVERED,
+];
+
+// Everything else (PENDING, CANCELLED, RETURNED, REFUNDED). Derived rather than listed so a
+// status added to the schema later can never fall out of both groups.
+export const UNSUCCESSFUL_ORDER_STATUSES: OrderStatus[] = Object.values(OrderStatus).filter(
+  (status) => !REVENUE_STATUSES.includes(status)
+);
+
+// Admin orders list tabs: "Orders" -> successful, "Cancelled & Failed" -> unsuccessful
+export const ORDER_GROUPS = {
+  successful: REVENUE_STATUSES,
+  unsuccessful: UNSUCCESSFUL_ORDER_STATUSES,
+} as const;
+
+export type OrderGroup = keyof typeof ORDER_GROUPS;
 
 // User blacklist TTL (in seconds)
 export const USER_BLACKLIST_TTL = 24 * 60 * 60; // 24 hours
